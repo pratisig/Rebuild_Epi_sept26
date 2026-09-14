@@ -362,12 +362,29 @@ ACTIONS = [
 
     ("C5", "P1 — Majeur",
      "Variables climatiques non disponibles à l'horizon",
-     "Plusieurs variables climatiques agrégées sur la semaine courante sont utilisées "
-     "alors qu'elles ne seront connues qu'après la fin de la semaine.",
-     "Décaler chaque covariable du délai de disponibilité réel, et documenter ce délai "
-     "par variable.",
-     "app_paludisme.py, enrichissement climatique",
-     "Majeur", "0,5 j", "⚠️ Partiel"),
+     "Les produits satellitaires et de réanalyse ne sont publiés qu'après un délai : "
+     "employer la météo de la semaine t pour prévoir la semaine t revient à utiliser, "
+     "en prévision réelle, une information qui n'existera pas encore. C'est une fuite "
+     "de même nature que celle des moyennes mobiles non décalées, mais plus discrète "
+     "car elle porte sur une variable exogène. En l'état, le modèle est entraîné avec "
+     "une colonne que la production ne saura pas remplir.",
+     "`add_climate_features` accepte désormais un `availability_lag` qui décale les "
+     "valeurs climatiques du délai de publication, **avant** le calcul des retards "
+     "épidémiologiques : ceux-ci se composent donc avec lui (`precip_lag_4` avec un "
+     "délai de 2 désigne la pluie de t-6, bien disponible à t). Les semaines sans "
+     "antécédent publié deviennent NaN plutôt que d'être approximées. Paramètre "
+     "propagé par `build_design_matrix` (`climate_availability_lag`). Cinq tests "
+     "permanents couvrent le décalage, sa composition avec les retards, "
+     "l'indépendance par aire, la préservation du comportement par défaut et la "
+     "propagation.",
+     "epimodel/features.py : `CLIMATE_AVAILABILITY_LAG`, `add_climate_features`, "
+     "`build_design_matrix`",
+     "Majeur", "0,5 j",
+     "✅ Mécanisme corrigé et testé — le **délai réel reste à renseigner au "
+     "déploiement** : il dépend du produit effectivement branché et de sa cadence de "
+     "republication (2 à 6 semaines pour NASA POWER et ERA5), ce que cet audit n'a "
+     "pas pu mesurer faute d'accès réseau. Le défaut vaut donc 0, c'est-à-dire le "
+     "comportement antérieur, jusqu'à ce que la valeur mesurée soit saisie."),
 
     # ── D. Covariables statiques ────────────────────────────────────────
     ("D1", "P1 — Majeur",
@@ -775,7 +792,7 @@ def build(out_path):
         "Résumé exécutif",
         "Périmètre, méthode et limites de l'audit",
         "Fonctionnement de l'application",
-        "Diagnostic détaillé — les 37 défauts constatés",
+        "Diagnostic détaillé — les 38 défauts constatés",
         "Résultats expérimentaux chiffrés, y compris les résultats négatifs",
         "Corrections implémentées dans ce dépôt",
         "Recommandations d'un modélisateur épidémiologiste",
@@ -1038,7 +1055,7 @@ def build(out_path):
     doc.add_page_break()
 
     # ═══════════════ 4. DIAGNOSTIC ═══════════════
-    titre(doc, "4. Diagnostic détaillé — les 37 défauts constatés", 1)
+    titre(doc, "4. Diagnostic détaillé — les 38 défauts constatés", 1)
     para(doc,
          "Chaque défaut est numéroté, localisé dans le code, et accompagné de la preuve "
          "qui l'établit. Le code entre parenthèses dans chaque titre (A1, B2, C3…) "
@@ -1481,6 +1498,22 @@ def build(out_path):
               consequence="C'est exactement la classe de défaut que l'audit reproche "
                           "au code initial : elle a été reproduite, détectée par test, "
                           "et corrigée par keep_empty_features=True.")
+
+    bloc_diag(38, "Chemin climatique jamais exécutable (C5)",
+              "epimodel/features.py, ligne 467 (introduit puis corrigé pendant l'audit)",
+              "`add_climate_features` construisait ses clés de fusion à partir de "
+              "`COL_YEAR`, mais cette constante n'était pas importée depuis "
+              "`epimodel.panel` — seuls `COL_AREA`, `COL_CASES`, `COL_WEEK` et "
+              "`COL_WIDX` l'étaient.",
+              preuve="NameError: name 'COL_YEAR' is not defined — reproduit en "
+                     "appelant la fonction avec un cadre climatique réel",
+              consequence="Toute la branche climatique levait une exception dès qu'un "
+                          "cadre de données climatiques était réellement fourni : les "
+                          "retards de précipitations à 4, 6 et 8 semaines, pourtant "
+                          "justifiés épidémiologiquement, n'ont jamais pu être "
+                          "calculés. Le défaut était invisible tant que `climate_df` "
+                          "restait `None`, seul cas rencontré faute d'accès réseau. "
+                          "Corrigé, avec un test de non-régression.")
 
     doc.add_page_break()
 

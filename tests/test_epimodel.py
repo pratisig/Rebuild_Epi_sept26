@@ -351,3 +351,78 @@ def test_legacy_pipeline_still_shows_documented_defects(ds):
             dm = feats.dropna(subset=["cases_ma_2", "cases_lag_1"])
             recon_ma = 2 * dm["cases_ma_2"] - dm["cases_lag_1"]
             assert np.corrcoef(recon_ma, dm["cases"])[0, 1] > 0.999
+
+
+# ----------------------------------------------------------------------
+# Covariables climatiques : disponibilité réelle (action C5)
+# ----------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def climate_weekly(panel):
+    """Climat hebdomadaire synthétique, déterministe et repérable par sa valeur."""
+    cd = panel[["health_area", "year", "week_"]].copy()
+    cd["precip_api"] = np.arange(len(cd), dtype=float)
+    cd["temp_api"] = 25.0
+    cd["humidity_api"] = 50.0
+    return cd
+
+
+def test_climate_features_accept_a_real_climate_frame(panel, climate_weekly):
+    """
+    Non-régression : `COL_YEAR` était utilisé dans `add_climate_features` sans
+    être importé, ce qui levait `NameError` dès qu'un vrai climat était fourni.
+    Le chemin avec données climatiques n'avait donc jamais pu s'exécuter.
+    """
+    out = em.add_climate_features(panel, climate_df=climate_weekly)
+    for c in ["temp_api", "precip_api", "humidity_api", "precip_lag_4",
+              "precip_lag_6", "precip_lag_8", "precip_ma_4_8", "temp_ma_4"]:
+        assert c in out.columns, f"colonne climatique absente : {c}"
+    assert out["precip_api"].notna().any()
+
+
+def test_climate_availability_lag_uses_only_published_values(panel, climate_weekly):
+    """
+    Avec un délai de publication de 2 semaines, la valeur attribuée à la
+    semaine t doit être celle de t-2 : c'est la seule qui sera réellement
+    connue au moment de prévoir.
+    """
+    base = em.add_climate_features(panel, climate_df=climate_weekly, availability_lag=0)
+    lag2 = em.add_climate_features(panel, climate_df=climate_weekly, availability_lag=2)
+    aire = "health_area"
+    a0 = base[base[aire] == base[aire].iloc[0]].reset_index(drop=True)
+    a2 = lag2[lag2[aire] == lag2[aire].iloc[0]].reset_index(drop=True)
+
+    assert a2["precip_api"].iloc[9] == a0["precip_api"].iloc[7]
+    # les semaines sans antécédent publié sont NaN, pas approximées
+    assert a2["precip_api"].iloc[:2].isna().all()
+    assert a0["precip_api"].iloc[:2].notna().all()
+
+
+def test_climate_availability_lag_composes_with_epi_lags(panel, climate_weekly):
+    """`precip_lag_4` avec un délai de 2 désigne la pluie de t-6, disponible à t."""
+    base = em.add_climate_features(panel, climate_df=climate_weekly, availability_lag=0)
+    lag2 = em.add_climate_features(panel, climate_df=climate_weekly, availability_lag=2)
+    aire = "health_area"
+    a0 = base[base[aire] == base[aire].iloc[0]].reset_index(drop=True)
+    a2 = lag2[lag2[aire] == lag2[aire].iloc[0]].reset_index(drop=True)
+    assert a2["precip_lag_4"].iloc[9] == a0["precip_api"].iloc[3]
+
+
+def test_climate_availability_lag_defaults_to_prior_behaviour(panel, climate_weekly):
+    """Le défaut (0) reproduit exactement le comportement antérieur."""
+    aire = "health_area"
+    defaut = em.add_climate_features(panel, climate_df=climate_weekly)
+    explicite = em.add_climate_features(panel, climate_df=climate_weekly, availability_lag=0)
+    pd.testing.assert_frame_equal(defaut, explicite)
+
+
+def test_climate_availability_lag_reaches_design_matrix(panel, climate_weekly):
+    """Le paramètre est bien propagé par `build_design_matrix`."""
+    aire = "health_area"
+    first = panel[aire].iloc[0]
+    base = em.build_design_matrix(panel, climate_df=climate_weekly,
+                                  climate_availability_lag=0)[0]
+    lag2 = em.build_design_matrix(panel, climate_df=climate_weekly,
+                                  climate_availability_lag=2)[0]
+    b0 = base[base[aire] == first].reset_index(drop=True)
+    b2 = lag2[lag2[aire] == first].reset_index(drop=True)
+    assert b2["precip_api"].iloc[9] == b0["precip_api"].iloc[7]

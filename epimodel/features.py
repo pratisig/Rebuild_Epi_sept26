@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from .panel import COL_AREA, COL_CASES, COL_WEEK, COL_WIDX
+from .panel import COL_AREA, COL_CASES, COL_WEEK, COL_WIDX, COL_YEAR
 
 # ----------------------------------------------------------------------
 # Paramètres par défaut
@@ -38,6 +38,22 @@ from .panel import COL_AREA, COL_CASES, COL_WEEK, COL_WIDX
 DEFAULT_LAGS = (1, 2, 3, 4, 8, 13, 26, 52)
 DEFAULT_WINDOWS = (4, 8, 13)
 PRECIP_LAGS = (4, 6, 8)
+
+# Décalage de disponibilité des produits climatiques, en semaines.
+#
+# Les produits satellitaires et de réanalyse (NASA POWER, ERA5, WorldPop) ne
+# sont publiés qu'après un délai : la valeur d'une semaine donnée n'est pas
+# connue au moment où cette semaine se produit. Utiliser la météo de la semaine
+# t pour prédire la semaine t revient donc à employer, en prévision, une
+# information qui n'existera pas encore — une fuite de même nature que celle des
+# moyennes mobiles non décalées, mais plus discrète car elle porte sur une
+# variable exogène.
+#
+# La valeur par défaut est 0, c'est-à-dire le comportement antérieur : le délai
+# réel dépend du produit effectivement branché et de sa cadence de republication,
+# que cet audit n'a pas pu mesurer faute d'accès réseau. Il doit être renseigné
+# au déploiement (2 à 6 semaines pour POWER et ERA5).
+CLIMATE_AVAILABILITY_LAG = 0
 
 # Ordre canonique : garantit la reproductibilité (l'ancien code utilisait
 # `list(set(...))`, dont l'ordre varie d'un processus à l'autre).
@@ -417,7 +433,9 @@ def add_spatial_features(panel: pd.DataFrame,
 # ======================================================================
 def add_climate_features(panel: pd.DataFrame,
                          climate_df: Optional[pd.DataFrame] = None,
-                         precip_lags: Sequence[int] = PRECIP_LAGS) -> pd.DataFrame:
+                         precip_lags: Sequence[int] = PRECIP_LAGS,
+                         availability_lag: int = CLIMATE_AVAILABILITY_LAG
+                         ) -> pd.DataFrame:
     """
     Variables climatiques hebdomadaires + retards de précipitations.
 
@@ -425,6 +443,16 @@ def add_climate_features(panel: pd.DataFrame,
     pluies sur l'abondance vectorielle est décalé de 4 à 8 semaines (durée du
     cycle aquatique + sporogonique). Modéliser uniquement la pluie de la semaine
     courante — comme le faisait l'ancien pipeline — passe à côté du signal.
+
+    ``availability_lag`` (action C5 de l'audit) décale les valeurs climatiques
+    du délai de publication du produit. Sans lui, la météo de la semaine *t*
+    sert à prédire la semaine *t* alors qu'elle ne sera connue qu'après coup :
+    en prévision réelle, la colonne serait vide ou approximée, et le modèle se
+    retrouverait hors de son domaine d'entraînement. Le décalage est appliqué
+    **avant** le calcul des retards épidémiologiques, qui se composent donc avec
+    lui (``precip_lag_4`` avec un délai de 2 désigne la pluie de t-6, bien
+    disponible à t). Par défaut 0 : le délai réel dépend du produit branché et
+    n'a pas pu être mesuré dans cet environnement sans accès réseau.
     """
     df = panel.copy()
     if climate_df is None or len(climate_df) == 0:
@@ -443,6 +471,11 @@ def add_climate_features(panel: pd.DataFrame,
     cd = cd.groupby(keys, as_index=False)[use].mean()
     df = df.drop(columns=[c for c in use if c in df.columns], errors="ignore")
     df = df.merge(cd, on=keys, how="left")
+
+    # Décalage de disponibilité : appliqué ici, avant tout retard dérivé.
+    if availability_lag and availability_lag > 0:
+        for c in use:
+            df[c] = df.groupby(COL_AREA, sort=False)[c].shift(availability_lag)
 
     for lag in precip_lags:
         df[f"precip_lag_{lag}"] = (df.groupby(COL_AREA, sort=False)["precip_api"]
@@ -510,7 +543,8 @@ def build_design_matrix(panel: pd.DataFrame,
                         lags: Sequence[int] = DEFAULT_LAGS,
                         windows: Sequence[int] = DEFAULT_WINDOWS,
                         extra_static: Optional[Sequence[str]] = None,
-                        feature_cols: Optional[Sequence[str]] = None
+                        feature_cols: Optional[Sequence[str]] = None,
+                        climate_availability_lag: int = CLIMATE_AVAILABILITY_LAG
                         ) -> (pd.DataFrame, List[str]):
     """
     Construit la matrice de conception complète.
@@ -530,7 +564,8 @@ def build_design_matrix(panel: pd.DataFrame,
     else:
         df["spatial_lag_1"] = np.nan
         df["spatial_cluster"] = np.nan
-    df = add_climate_features(df, climate_df=climate_df)
+    df = add_climate_features(df, climate_df=climate_df,
+                              availability_lag=climate_availability_lag)
 
     if feature_cols is None:
         feature_cols = select_features(df, groups=groups, extra_static=extra_static)
