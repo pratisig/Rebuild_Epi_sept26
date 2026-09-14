@@ -624,15 +624,16 @@ ACTIONS = [
      "du code : aucun fichier applicatif ne calcule ni n'affiche de MAPE. Les "
      "sections françaises (l. 303-318, 346, 399, 480) et leur miroir anglais "
      "(l. 710-867) renvoient donc toutes à une métrique inexistante.",
-     "Soit le calculer et l'afficher réellement, soit retirer ces sections. Sur des "
-     "comptages comportant des zéros — fréquents en basse transmission — le MAPE "
-     "n'est pas défini : le sMAPE (déjà implémenté dans le noyau) ou le MASE sont "
-     "préférables. Le barème d'interprétation doit être retiré tant qu'aucune "
-     "mesure ne le fonde.",
+     "Retirer le barème et les renvois à une métrique inexistante, et documenter à "
+     "la place ce qui est réellement calculé : le sMAPE et l'erreur relative à la "
+     "moyenne observée, tous deux produits par `metrics_summary`. Le MAPE classique "
+     "divise par la valeur observée : il vaut l'infini dès qu'une semaine compte "
+     "zéro cas, ce qui est fréquent en basse transmission — vérifié "
+     "numériquement sur un jeu comportant un zéro.",
      "README.md l. 303-318, 346, 399, 480 (et miroir anglais l. 710-867)",
-     "Majeur — le README est le premier document lu, et son barème invite à une "
-     "confiance que rien ne mesure.",
-     "0,5 j", "⚠️ À faire"),
+     "Majeur — le README est le premier document lu, et son barème invitait à une "
+     "confiance que rien ne mesurait.",
+     "0,5 j", "✅ Corrigé"),
 
     # ── I. Sécurité et ingénierie ───────────────────────────────────────
     ("I1", "P0 — Bloquant",
@@ -1348,7 +1349,10 @@ def build(out_path):
               "R² supérieur à 0,85 de « typique », et fonde sa règle de fiabilité "
               "sur le R² in-sample. Le README, de son côté, présente le MAPE comme "
               "« la métrique de référence » avec un barème en quatre niveaux, alors "
-              "qu'aucun code ne le calcule.",
+              "qu'aucun code ne le calcule. Les deux documents ont été corrigés : le "
+              "manuel décrit désormais le protocole réel, et le README remplace le "
+              "MAPE par le sMAPE et l'erreur relative à la moyenne observée, qui "
+              "sont effectivement calculés.",
               consequence="Le manuel est le document de référence des utilisateurs. Il "
                           "atteste d'une rigueur méthodologique que le code ne met pas "
                           "en œuvre.")

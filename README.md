@@ -300,22 +300,45 @@ Un district à forte charge (capitale, grand centre urbain) aura mécaniquement 
 
 Pour comparer les performances entre districts de tailles différentes, on utilise des métriques **relatives** :
 
-#### MAPE — Mean Absolute Percentage Error (Erreur absolue en %)
+> ⚠️ **Cette version du code ne calcule pas de MAPE.** Une version antérieure de
+> ce document présentait le MAPE comme « la métrique de référence » avec un barème
+> d'interprétation en quatre niveaux. Aucune métrique de ce nom n'est calculée ni
+> affichée par l'application. Le barème a donc été retiré : il invitait à une
+> confiance qu'aucune mesure ne fondait.
+
+#### sMAPE — Mean Absolute Percentage Error symétrique
+
+C'est la métrique relative **effectivement calculée** par le noyau de modélisation
+(`epimodel/validation.py`) :
 
 ```
-MAPE = (1/n) × Σ |observé − prédit| / observé × 100
+sMAPE = (1/n) × Σ |observé − prédit| / ((|observé| + |prédit|) / 2) × 100
 ```
 
-C'est la métrique de référence pour la surveillance épidémiologique du paludisme. Elle exprime l'erreur en pourcentage des valeurs réelles.
+Le MAPE classique divise par la valeur observée : il n'est pas défini lorsque
+celle-ci vaut zéro, ce qui est fréquent en basse transmission et dans les aires à
+faible charge — précisément celles où la surveillance a le plus d'importance. Le
+sMAPE évite cette division par zéro et reste borné entre 0 et 200 %.
 
-| Seuil MAPE | Qualité | Usage terrain |
-|---|---|---|
-| < 10 % | 🟢 Excellent | Confiance élevée — alertes précoces fiables |
-| 10 – 20 % | 🟡 Bon | Acceptable — planification logistique fiable |
-| 20 – 30 % | 🟠 Modéré | Tendances exploitables, chiffres exacts à nuancer |
-| > 30 % | 🔴 Faible | Tendances seulement — ne pas utiliser pour des décisions chiffrées |
+| sMAPE | Lecture indicative |
+|---|---|
+| < 25 % | erreur faible au regard du niveau de charge |
+| 25 – 50 % | tendance exploitable, chiffres exacts à nuancer |
+| > 50 % | ordre de grandeur seulement |
 
-> Des études sur le paludisme en Afrique subsaharienne rapportent des MAPE entre 3,9 % (modèles avec variables climatiques) et 22,5 % (modèles classiques).
+Ces repères sont des ordres de grandeur, pas des seuils de décision : la valeur à
+comparer est celle de votre **modèle de référence** (voir MASE ci-dessous), pas un
+nombre absolu.
+
+#### Erreur relative à la moyenne observée
+
+```
+MAE / moyenne des cas observés × 100
+```
+
+C'est la lecture la plus directe pour un décideur : « le modèle se trompe en
+moyenne de X % du niveau habituel de cas ». Elle est calculée par le noyau et
+affichée dans l'onglet de modélisation.
 
 #### CV(RMSE) — Coefficient de Variation du RMSE
 
@@ -343,7 +366,7 @@ Compare le modèle à une **baseline naïve** (prédire la valeur de la semaine 
 | District forte charge (moy. > 1 000 cas/sem.) | MAE > 400 | MAE/moy. > 40 % | ⚠️ Élevé — vérifier outliers ou données manquantes |
 | District faible charge (moy. < 200 cas/sem.) | MAE > 100 | MAE/moy. > 50 % | 🔴 Critique — modèle peu fiable sur ce district |
 | Tout niveau | RMSE >> MAE (ratio > 2) | — | ⚠️ Présence de pics extrêmes mal captés |
-| Tout niveau | R² élevé mais MAPE > 30 % | — | ⚠️ Surapprentissage possible — toujours vérifier le MAPE |
+| Tout niveau | R² élevé mais gain nul sur le modèle de référence | — | ⚠️ Le R² reflète les écarts entre districts, pas une capacité de prévision |
 
 ---
 
@@ -396,9 +419,10 @@ Après modélisation, lire dans cet ordre :
                    > 0,70 : oui → continuer
                    < 0,50 : non → ajouter des données ou changer d'algorithme
 
-2. MAPE         → L'erreur est-elle acceptable proportionnellement ?
+2. MAE / moyenne observée
+                → L'erreur est-elle acceptable proportionnellement ?
                    < 20 % : oui → les prédictions sont exploitables
-                   > 30 % : non → les chiffres exacts ne sont pas fiables
+                   > 50 % : non → les chiffres exacts ne sont pas fiables
 
 3. MAE brut     → En combien de cas me trompe-t-on en moyenne ?
                    Toujours lire avec la moyenne observée du district.
@@ -477,7 +501,7 @@ Pas nécessairement. Comparez le MAE à la **moyenne hebdomadaire observée** de
 - Si la moyenne est 3 500 cas/semaine → MAE de 480 = **13,7 %** d'erreur → ✅ Excellent
 - Si la moyenne est 800 cas/semaine → MAE de 480 = **60 %** d'erreur → 🔴 Insuffisant
 
-Consultez toujours le **MAPE** affiché dans les résultats pour une lecture directe en pourcentage.
+Divisez le **MAE affiché** par la moyenne hebdomadaire observée de votre district : c'est la lecture en pourcentage la plus fiable. (Le MAPE n'est pas calculé par cette version du code — voir la section 6.3.)
 
 ### 🔮 « Sur combien de semaines puis-je faire confiance aux prédictions ? »
 En pratique, la fiabilité décroît au-delà de 4–6 semaines. Pour les 2–4 semaines suivantes, les prédictions sont suffisamment fiables pour guider les décisions logistiques. L'interface affiche le R² en validation croisée pour vous aider à estimer la confiance.
@@ -707,22 +731,45 @@ A high-burden district (capital city, large urban centre) will mechanically show
 
 ### E6.3. Normalized Metrics — Comparing Across Districts
 
-#### MAPE — Mean Absolute Percentage Error
+> ⚠️ **This version of the code does not compute MAPE.** An earlier revision of
+> this document presented MAPE as "the reference metric" with a four-level
+> interpretation scale. No metric by that name is computed or displayed by the
+> application. The scale has therefore been removed: it invited a confidence that
+> no measurement supported.
+
+#### sMAPE — Symmetric Mean Absolute Percentage Error
+
+This is the relative metric **actually computed** by the modelling core
+(`epimodel/validation.py`):
 
 ```
-MAPE = (1/n) × Σ |observed − predicted| / observed × 100
+sMAPE = (1/n) × Σ |observed − predicted| / ((|observed| + |predicted|) / 2) × 100
 ```
 
-The reference metric for malaria epidemiological surveillance. Expresses error as a percentage of actual values.
+Classic MAPE divides by the observed value, so it is undefined when that value is
+zero — common in low-transmission settings and low-burden areas, precisely where
+surveillance matters most. sMAPE avoids that division by zero and stays bounded
+between 0 and 200%.
 
-| MAPE threshold | Quality | Field use |
-|---|---|---|
-| < 10% | 🟢 Excellent | High confidence — reliable early warnings |
-| 10–20% | 🟡 Good | Acceptable — reliable logistical planning |
-| 20–30% | 🟠 Moderate | Trends reliable, exact figures to be nuanced |
-| > 30% | 🔴 Poor | Trends only — do not use for quantitative decisions |
+| sMAPE | Indicative reading |
+|---|---|
+| < 25% | small error relative to the burden level |
+| 25 – 50% | trend usable, exact figures to be nuanced |
+| > 50% | order of magnitude only |
 
-> Studies on malaria in sub-Saharan Africa report MAPE values between 3.9% (models with climate variables) and 22.5% (classical models).
+These are orders of magnitude, not decision thresholds: the value to compare
+against is that of your **reference model** (see MASE below), not an absolute
+number.
+
+#### Error relative to the observed mean
+
+```
+MAE / mean observed cases × 100
+```
+
+The most direct reading for a decision-maker: "the model is wrong by X% of the
+usual case level on average". Computed by the core and displayed in the
+modelling tab.
 
 #### CV(RMSE) — Coefficient of Variation of RMSE
 
@@ -750,7 +797,7 @@ Compares the model against a **naïve baseline** (predicting last week's value).
 | High-burden district (mean > 1,000 cases/week) | MAE > 400 | MAE/mean > 40% | ⚠️ High — check for outliers or missing data |
 | Low-burden district (mean < 200 cases/week) | MAE > 100 | MAE/mean > 50% | 🔴 Critical — model unreliable for this district |
 | Any level | RMSE >> MAE (ratio > 2) | — | ⚠️ Extreme peaks poorly captured |
-| Any level | High R² but MAPE > 30% | — | ⚠️ Possible overfitting — always check MAPE |
+| Any level | High R² but no gain over the reference model | — | ⚠️ R² reflects between-district variance, not forecasting skill |
 
 ---
 
@@ -803,7 +850,8 @@ After modeling, read in this order:
                   > 0.70: yes → continue
                   < 0.50: no → add data or change algorithm
 
-2. MAPE        → Is the error acceptable relative to the data magnitude?
+2. MAE / observed mean
+               → Is the error acceptable relative to the data magnitude?
                   < 20%: yes → predictions are usable
                   > 30%: no → exact figures are unreliable
 
@@ -864,7 +912,7 @@ Not necessarily. Compare MAE to the **observed weekly mean** for your district:
 - Mean = 3,500 cases/week → MAE of 480 = **13.7%** → ✅ Excellent
 - Mean = 800 cases/week → MAE of 480 = **60%** → 🔴 Insufficient
 
-Always check the **MAPE** displayed in the results for a direct percentage reading.
+Divide the **displayed MAE** by your district's mean weekly observed cases: that is the most reliable percentage reading. (MAPE is not computed by this version of the code — see section E6.3.)
 
 ### 🔮 "How many weeks ahead can I trust the predictions?"
 Reliability drops beyond 4–6 weeks. For the next 2–4 weeks, predictions are reliable enough to guide logistical decisions. Check the CV R² displayed after modeling for confidence estimation.
