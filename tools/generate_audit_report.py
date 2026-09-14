@@ -678,18 +678,26 @@ ACTIONS = [
      "Sous-applications chargées par `exec()`",
      "`main_app.py` exécute le code source des sous-applications par `exec()`. Aucune "
      "isolation, aucune vérification d'intégrité, débogage impossible.",
-     "Remplacer `exec()` par un chargement qui nomme le fichier réel dans les "
-     "tracebacks. Attention : la transformation actuelle du source n'est pas "
-     "gratuite — elle retire les appels `st.set_page_config` des "
-     "sous-applications, Streamlit n'en autorisant qu'un par exécution. Un "
-     "basculement naïf vers `runpy.run_path` casserait donc le portail.",
-     "main_app.py l. 164-180",
-     "Majeur", "1 j",
-     "⚠️ À faire — non corrigé volontairement : le chemin de chargement des "
-     "sous-applications ne s'exécute qu'après authentification et sélection "
-     "d'une page, ce que le cadre de test utilisé ici ne permet pas d'atteindre. "
-     "Une modification non vérifiable de bout en bout du point d'entrée "
-     "présente plus de risque que le défaut qu'elle corrige."),
+     "Compiler le code des sous-applications avec son nom de fichier réel et "
+     "préserver la numérotation des lignes. La transformation du source est "
+     "conservée mais réécrite : `st.set_page_config` n'est plus *supprimé* "
+     "(ce qui décalait toute la numérotation) mais *remplacé par `pass` à la "
+     "même position*, via une transformation d'arbre syntaxique. Streamlit "
+     "n'autorisant qu'un seul `set_page_config` par exécution, cette "
+     "neutralisation reste indispensable — un basculement naïf vers "
+     "`runpy.run_path` casserait le portail.",
+     "main_app.py : `_NeutralisePageConfig` + `load_app()`",
+     "Majeur", "0,5 j",
+     "✅ Corrigé — deux défauts mesurés puis corrigés. "
+     "(1) Fichier non nommé : les tracebacks indiquaient `File <string>`. "
+     "(2) Numérotation fausse : `set_page_config` multi-lignes faisait "
+     "disparaître 6 lignes, un marqueur placé en ligne 9 était signalé ligne 3. "
+     "Après correction, les deux cas reportent le nom du fichier et la ligne "
+     "exacte. Équivalence vérifiée de bout en bout : le rendu des quatre pages "
+     "du portail est identique avant et après (nombre de blocs markdown, "
+     "expanders, selectbox, erreurs). Le parcours après authentification a été "
+     "ajouté à `tools/smoke_test_apps.py`, avec un garde-fou de rendu minimal "
+     "dont l'efficacité a été contrôlée par injection d'une régression."),
 
     ("I3", "P1 — Majeur",
      "Aucun test, aucune fixation des versions",
@@ -1415,9 +1423,15 @@ def build(out_path):
 
     bloc_diag(32, "Sous-applications chargées par exec() (I2)",
               "main_app.py",
-              "Le code source des sous-applications est exécuté par exec().",
-              consequence="Aucune isolation, aucune vérification d'intégrité, et un "
-                          "débogage considérablement plus difficile.")
+              "Le code source des sous-applications est exécuté par exec(), et la "
+              "transformation du source qui retire `st.set_page_config` décale la "
+              "numérotation. Deux effets mesurés : les tracebacks indiquent "
+              "`File \"<string>\"` sans nom de fichier, et un marqueur placé en "
+              "ligne 9 d'une sous-application est signalé en ligne 3.",
+              consequence="Un dysfonctionnement en production est impossible à "
+                          "localiser : ni le fichier ni la ligne ne sont fiables. "
+                          "Corrigé — le fichier est désormais nommé et la "
+                          "numérotation exacte.")
 
     bloc_diag(33, "Aucun test, versions non fixées, fichiers corrompus (I3, I4)",
               "requirements.txt, data/",
