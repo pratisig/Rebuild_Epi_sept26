@@ -22,8 +22,16 @@ st.set_page_config(
 # ============================================================
 # AUTHENTIFICATION
 # ============================================================
+# ── Emplacement des identifiants ─────────────────────────────────────────
+# Correction (action I1 de l'audit) : le chemin n'est plus codé en dur. En
+# production, les identifiants doivent vivre HORS du dépôt — variable
+# d'environnement pointant vers un fichier non versionné, ou secret monté par
+# l'orchestrateur. Le repli sur ./credentials.yaml est conservé pour le
+# développement local.
+CREDENTIALS_PATH = os.environ.get("EPI_CREDENTIALS_PATH", "credentials.yaml")
+
 try:
-    with open("credentials.yaml") as file:
+    with open(CREDENTIALS_PATH, encoding="utf-8") as file:
         config = yaml.load(file, Loader=SafeLoader)
 
     authenticator = stauth.Authenticate(
@@ -47,7 +55,13 @@ try:
         st.stop()
 
 except FileNotFoundError:
-    st.error("Fichier credentials.yaml introuvable.")
+    st.error(
+        f"Fichier d'identifiants introuvable : `{CREDENTIALS_PATH}`.\n\n"
+        "Copiez `credentials.yaml.example` vers ce chemin, renseignez un mot de "
+        "passe **haché** et une clé de cookie aléatoire, ou faites pointer la "
+        "variable d'environnement `EPI_CREDENTIALS_PATH` vers un fichier placé "
+        "hors du dépôt."
+    )
     st.stop()
 except Exception as e:
     st.error(f"Erreur d'authentification : {e}")

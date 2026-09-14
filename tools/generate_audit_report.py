@@ -657,10 +657,22 @@ ACTIONS = [
      "Identifiants en clair dans le dépôt",
      "`credentials.yaml` contient un mot de passe en clair et une clé de signature de "
      "cookie, engagés dans le dépôt. L'historique git les conserve.",
-     "Retirer du dépôt, faire tourner la clé et le mot de passe, réécrire l'historique, "
-     "et passer par des variables d'environnement.",
-     "credentials.yaml",
-     "Surcritique (sécurité)", "0,5 j", "⚠️ À faire"),
+     "Ne plus suivre le fichier dans le dépôt, rendre son emplacement "
+     "configurable, et fournir un modèle documentant le hachage du mot de passe "
+     "et la génération de la clé de cookie. Fait : `main_app.py` lit désormais "
+     "`EPI_CREDENTIALS_PATH` (repli sur `./credentials.yaml` pour le "
+     "développement local) ; `credentials.yaml` est retiré du suivi git tout en "
+     "restant présent sur disque ; `credentials.yaml.example` fournit la "
+     "procédure (`Hasher.hash()` produit un hachage bcrypt de 60 caractères, "
+     "`secrets.token_hex(32)` pour la clé).",
+     "main_app.py l. 26-40 ; credentials.yaml ; credentials.yaml.example",
+     "Surcritique (sécurité)", "0,5 j",
+     "⚠️ Partiel — le code ne force plus l'engagement du secret, mais **la fuite "
+     "n'est pas refermée** : le mot de passe et la clé de cookie restent lisibles "
+     "dans l'historique git. Les retirer du suivi ne réécrit pas l'histoire. Il "
+     "faut impérativement faire tourner la clé et le mot de passe, puis réécrire "
+     "l'historique (`git filter-repo`) — opérations qui relèvent du propriétaire "
+     "du dépôt, pas d'une modification de code."),
 
     ("I2", "P1 — Majeur",
      "Sous-applications chargées par `exec()`",
@@ -1390,10 +1402,16 @@ def build(out_path):
 
     bloc_diag(31, "Identifiants en clair dans le dépôt (I1)",
               "credentials.yaml",
-              "Un mot de passe en clair et une clé de signature de cookie sont engagés "
-              "dans le dépôt, et conservés dans l'historique.",
+              "Un mot de passe en clair (5 caractères) et une clé de signature de "
+              "cookie (38 caractères) sont engagés dans le dépôt, et conservés dans "
+              "l'historique. Le fichier figure bien dans `.gitignore`, mais un "
+              "fichier déjà suivi par git n'est pas affecté par un ignore : la "
+              "protection était donc inopérante.",
               consequence="Toute personne ayant accès au dépôt peut s'authentifier et "
-                          "forger des sessions.")
+                          "forger des sessions. Le code a été corrigé pour ne plus "
+                          "imposer cet engagement, mais l'historique conserve les "
+                          "valeurs : la rotation de la clé et du mot de passe reste "
+                          "indispensable.")
 
     bloc_diag(32, "Sous-applications chargées par exec() (I2)",
               "main_app.py",
@@ -2107,6 +2125,12 @@ def build(out_path):
 
     titre(doc, "9.3 Gouvernance recommandée", 2)
     for t in [
+        ("Rotation immédiate des identifiants. ",
+         "Le mot de passe et la clé de cookie ont été engagés en clair dans le "
+         "dépôt. Leur retrait du suivi ne réécrit pas l'historique : tant qu'ils "
+         "ne sont pas remplacés, ils restent valides pour quiconque a consulté le "
+         "dépôt un jour. C'est la seule action de cette liste qui ne peut pas "
+         "attendre."),
         ("Revue statistique avant mise en production. ",
          "Aucune nouvelle variable ni aucun nouvel algorithme ne devrait entrer dans "
          "le modèle sans passage par le banc d'essai, avec comparaison au modèle "
