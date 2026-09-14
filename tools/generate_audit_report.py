@@ -611,15 +611,28 @@ ACTIONS = [
      "reproductibles.",
      "app_manuel.py l. 493-495, 907-908, 1575-1584",
      "Majeur — le manuel est un document de référence pour les utilisateurs.",
-     "1 j", "⚠️ À faire"),
+     "1 j", "✅ Corrigé"),
 
-    ("H2", "P2 — Mineur",
-     "MAPE documenté mais jamais calculé",
-     "Le rapport mentionne un MAPE qui n'est calculé nulle part.",
-     "Le calculer, ou le supprimer. Sur des comptages comportant des zéros, le MAPE "
-     "n'est pas défini : préférer le sMAPE ou le MASE.",
-     "report_generator.py",
-     "Mineur", "0,5 j", "⚠️ À faire"),
+    ("H2", "P1 — Majeur",
+     "MAPE présenté comme la métrique de référence alors qu'il n'est jamais calculé",
+     "`README.md` consacre une section au MAPE, le qualifie de « métrique de "
+     "référence pour la surveillance épidémiologique du paludisme », publie un "
+     "barème d'interprétation en quatre niveaux (< 10 % excellent, 10-20 % bon, "
+     "20-30 % modéré, > 30 % faible), cite des valeurs de la littérature (3,9 % à "
+     "22,5 %) et conclut : « Consultez toujours le MAPE affiché dans les résultats "
+     "pour une lecture directe en pourcentage. » Vérification faite sur l'ensemble "
+     "du code : aucun fichier applicatif ne calcule ni n'affiche de MAPE. Les "
+     "sections françaises (l. 303-318, 346, 399, 480) et leur miroir anglais "
+     "(l. 710-867) renvoient donc toutes à une métrique inexistante.",
+     "Soit le calculer et l'afficher réellement, soit retirer ces sections. Sur des "
+     "comptages comportant des zéros — fréquents en basse transmission — le MAPE "
+     "n'est pas défini : le sMAPE (déjà implémenté dans le noyau) ou le MASE sont "
+     "préférables. Le barème d'interprétation doit être retiré tant qu'aucune "
+     "mesure ne le fonde.",
+     "README.md l. 303-318, 346, 399, 480 (et miroir anglais l. 710-867)",
+     "Majeur — le README est le premier document lu, et son barème invite à une "
+     "confiance que rien ne mesure.",
+     "0,5 j", "⚠️ À faire"),
 
     # ── I. Sécurité et ingénierie ───────────────────────────────────────
     ("I1", "P0 — Bloquant",
@@ -1329,11 +1342,13 @@ def build(out_path):
     titre(doc, "4.8 Documentation, sécurité et ingénierie", 2)
     bloc_diag(30, "Documentation contraire au code (H1, H2)",
               "app_manuel.py, lignes 493-495, 907-908 et 1575-1584",
-              "Le manuel décrit une validation par « segments temporels "
-              "(TimeSeriesSplit) » alors que le découpage effectif est spatial. Il "
-              "annonce un R² supérieur à 0,90 à 2-4 semaines et qualifie un R² "
-              "supérieur à 0,85 de « typique ». Un MAPE y est documenté sans être "
-              "calculé nulle part.",
+              "Le manuel (app_manuel.py) décrit une validation par « segments "
+              "temporels (TimeSeriesSplit) » alors que le découpage effectif est "
+              "spatial, annonce un R² supérieur à 0,90 à 2-4 semaines, qualifie un "
+              "R² supérieur à 0,85 de « typique », et fonde sa règle de fiabilité "
+              "sur le R² in-sample. Le README, de son côté, présente le MAPE comme "
+              "« la métrique de référence » avec un barème en quatre niveaux, alors "
+              "qu'aucun code ne le calcule.",
               consequence="Le manuel est le document de référence des utilisateurs. Il "
                           "atteste d'une rigueur méthodologique que le code ne met pas "
                           "en œuvre.")
