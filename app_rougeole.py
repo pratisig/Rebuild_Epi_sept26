@@ -908,8 +908,11 @@ def worldpop_children_stats(_sa_gdf, use_gee, cache_key=""):
         status_text = st.sidebar.empty()
 
         status_text.text("📥 Chargement WorldPop...")
-        dataset = ee.ImageCollection("WorldPop/GP/100m/pop_age_sex")
-        pop_img = dataset.mosaic()
+        # Correction D3 : mosaïque restreinte à un millésime unique (voir
+        # epi_app_bridge.worldpop_mosaic pour le détail du défaut).
+        pop_img, _wp_annee = epi_app_bridge.worldpop_mosaic(ee)
+        if _wp_annee:
+            st.sidebar.caption(f"WorldPop : millésime {_wp_annee}")
 
         male_bands = ["M_0", "M_1", "M_5", "M_10"]
         female_bands = ["F_0", "F_1", "F_5", "F_10"]

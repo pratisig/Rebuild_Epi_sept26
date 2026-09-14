@@ -31,6 +31,47 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ----------------------------------------------------------------------
 # Extraction AST du code réel
 # ----------------------------------------------------------------------
+# Noms que le harnais doit garder sous son contrôle : ils sont fournis par le
+# stub et ne doivent jamais être écrasés par les imports du module audité.
+_RESERVE = ("st",)
+
+
+def _apply_module_imports(source: str, filename: str, ns: Dict[str, Any]) -> None:
+    """
+    Exécute les imports de niveau module du fichier audité.
+
+    Sans cette étape, les fonctions extraites n'ont pas accès aux modules que
+    l'application importe elle-même : ``population_cache_key`` utilisait
+    ``hashlib`` et levait un ``NameError`` silencieux, avalé par son propre
+    ``except Exception``. Résultat : la clé de cache retombait sur son empreinte
+    de repli et restait aveugle au contenu — exactement le défaut qu'elle était
+    censée corriger.
+
+    Chaque import est tenté isolément, et les noms réservés au stub sont
+    restaurés ensuite. Cette précaution est indispensable : dès que Streamlit est
+    réellement installé dans l'environnement, ``import streamlit as st`` réussit
+    et remplace le stub par le vrai module — les appels d'interface du bloc
+    testé partent alors dans le runtime réel au lieu d'être capturés, et le
+    harnais ne mesure plus rien.
+
+    Les imports qui échouent sont ignorés sans interrompre le reste.
+    """
+    reserves = {k: ns.get(k) for k in _RESERVE}
+    tree = ast.parse(source, filename=filename)
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        try:
+            mod = ast.Module(body=[node], type_ignores=[])
+            ast.fix_missing_locations(mod)
+            exec(compile(mod, filename, "exec"), ns)
+        except Exception:  # noqa: BLE001
+            continue
+    for k, v in reserves.items():
+        if v is not None:
+            ns[k] = v
+
+
 def _compile_functions(source: str, filename: str, ns: Dict[str, Any]) -> None:
     tree = ast.parse(source, filename=filename)
     fn_nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
@@ -139,6 +180,7 @@ def load_module_context(path: str, tab_name: str = "tab3",
     if extra_globals:
         ns.update(extra_globals)
 
+    _apply_module_imports(source, path, ns)
     _compile_functions(source, path, ns)
     block_src = _compile_block(source, path, tab_name, ns)
     return ns, st, block_src

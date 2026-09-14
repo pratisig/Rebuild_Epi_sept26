@@ -21,6 +21,7 @@ import epimodel as em
 import epi_app_bridge
 from epimodel.static_covariates import (STATIC_COLUMNS as GEE_STATIC_COLUMNS,
                                         describe_coverage as static_coverage)
+import hashlib
 import rasterio
 from rasterio.mask import mask
 import matplotlib.pyplot as plt
@@ -237,6 +238,32 @@ def fetch_climate_open_meteo(lat, lon, start_date, end_date):
 # -------------------------
 # Initialisation Google Earth Engine (Streamlit Cloud)
 # -------------------------
+def population_cache_key(iso3pays, gdf):
+    """
+    Clé de cache de l'enrichissement démographique.
+
+    **Correction (action E9 de l'audit)** : la clé précédente ne dépendait que du
+    code pays (``f"enrichi_{iso3pays}"``). Deux jeux de données différents portant
+    sur le même pays — référentiel géographique mis à jour, téléversement manuel,
+    filtre d'aires différent — partageaient donc la même entrée, et le second
+    récupérait silencieusement les valeurs du premier.
+
+    La clé incorpore désormais une empreinte du contenu : nombre d'aires et liste
+    triée de leurs identifiants. Coût négligeable (un hachage de quelques
+    centaines de chaînes courtes) et toute modification du référentiel invalide
+    le cache.
+    """
+    base = f"enrichi_{iso3pays}" if iso3pays else "enrichi_upload"
+    try:
+        noms = sorted(str(x).strip().lower()
+                      for x in gdf["health_area"].dropna().unique())
+        empreinte = hashlib.sha1(
+            f"{len(noms)}|{'|'.join(noms)}".encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        empreinte = "sans empreinte".replace(" ", "_")
+    return f"{base}_{empreinte}"
+
+
 @st.cache_resource
 def init_gee():
     """Initialise Google Earth Engine"""
@@ -292,8 +319,14 @@ def worldpop_malaria_stats(_sa_gdf, use_gee):
         status_text  = st.sidebar.empty()
         status_text.text("Chargement WorldPop...")
 
-        dataset      = ee.ImageCollection("WorldPop/GP/100m/pop_age_sex")
-        pop_img      = dataset.mosaic()
+        # Correction D3 : mosaïque restreinte à un millésime unique. Sans filtre,
+        # la collection (une image par pays ET par année, même emprise) était
+        # mosaïquée sur toutes les années et le pixel retenu dépendait de l'ordre
+        # d'arrivée : une même aire pouvait mélanger des populations de 2015 et
+        # de 2020.
+        pop_img, _wp_annee = epi_app_bridge.worldpop_mosaic(ee)
+        if _wp_annee:
+            st.sidebar.caption(f"WorldPop : millésime {_wp_annee}")
 
         male_bands_all   = ["M_0", "M_1", "M_5", "M_10", "M_15", "M_20", "M_25", "M_30"]
         female_bands_all = ["F_0", "F_1", "F_5", "F_10", "F_15", "F_20", "F_25", "F_30"]
@@ -321,21 +354,69 @@ def worldpop_malaria_stats(_sa_gdf, use_gee):
         pixel_area         = ee.Image.pixelArea().divide(10000)
         final_mosaic_count = final_mosaic.multiply(pixel_area)
 
-        # Conversion géométries — pattern rougeole (Polygon/MultiPolygon explicite)
+        # ── Conversion des géométries ────────────────────────────────────
+        # Correction (action D5 de l'audit). Deux défauts corrigés :
+        #   1. les géométries qui n'étaient ni Polygon ni MultiPolygon
+        #      (GeometryCollection, MultiPoint…) étaient écartées par un
+        #      `continue` silencieux : l'aire disparaissait de l'extraction sans
+        #      aucun message, et sa population restait vide sans que rien ne le
+        #      signale ;
+        #   2. seul `exterior.coords` était utilisé : les anneaux intérieurs
+        #      (enclaves, lacs) étaient ignorés, donc comptés comme de la surface
+        #      habitée et inclus dans la somme de population.
         status_text.text("Conversion géométries...")
         features = []
+        ecartees = []
+
+        def _anneaux(poly):
+            """Anneaux d'un Polygon : extérieur d'abord, puis les trous."""
+            rings = [[[x, y] for x, y in poly.exterior.coords]]
+            rings += [[[x, y] for x, y in r.coords] for r in poly.interiors]
+            return rings
+
+        def _polygones(geom):
+            """
+            Ramène toute géométrie à une liste aplatie de Polygones exploitables.
+
+            Traite Polygon, MultiPolygon et GeometryCollection (récursivement) ;
+            renvoie une liste vide pour les géométries sans composante polygonale
+            (Point, LineString…), qui seront alors signalées à l'utilisateur.
+            """
+            from shapely.geometry import Polygon as _P
+            if isinstance(geom, _P):
+                return [geom]
+            parties = getattr(geom, "geoms", None)
+            if not parties:
+                return []
+            aplati = []
+            for sous in parties:
+                aplati.extend(_polygones(sous))   # extend, et non append :
+                # _polygones renvoie déjà une liste
+            return aplati
+
         for _, row in _sa_gdf.iterrows():
             geom  = row.geometry
             props = {"health_area": row["health_area"]}
-            if geom.geom_type == "Polygon":
-                coords  = [[x, y] for x, y in geom.exterior.coords]
-                ee_geom = ee.Geometry.Polygon(coords)
-            elif geom.geom_type == "MultiPolygon":
-                coords  = [[[x, y] for x, y in poly.exterior.coords] for poly in geom.geoms]
-                ee_geom = ee.Geometry.MultiPolygon(coords)
-            else:
+            if geom is None or geom.is_empty:
+                ecartees.append((row["health_area"], "géométrie vide"))
                 continue
+            polys = _polygones(geom)
+            if not polys:
+                ecartees.append((row["health_area"], geom.geom_type))
+                continue
+            if len(polys) == 1:
+                ee_geom = ee.Geometry.Polygon(_anneaux(polys[0]))
+            else:
+                ee_geom = ee.Geometry.MultiPolygon([_anneaux(q) for q in polys])
             features.append(ee.Feature(ee_geom, props))
+
+        if ecartees:
+            st.sidebar.warning(
+                f"⚠️ {len(ecartees)} aire(s) écartée(s) de l'extraction WorldPop "
+                f"(géométrie non polygonale ou vide) : "
+                + ", ".join(f"{n} ({t})" for n, t in ecartees[:5])
+                + ("…" if len(ecartees) > 5 else "")
+            )
 
         fc = ee.FeatureCollection(features)
 
@@ -1430,8 +1511,8 @@ with st.sidebar.expander("📍 Données Obligatoires", expanded=True):
                 st.error(f"📋 Colonnes disponibles : {list(df.columns)}")
         else:
             st.error("❌ Impossible de lire le fichier de cas (df est vide).")
-    # ── WorldPop — cache par pays (pattern rougeole) ──────────
-    cache_key = f"enrichi_{iso3pays}" if iso3pays else "enrichi_upload"
+    # ── WorldPop — cache par pays ET par empreinte du référentiel ─────────
+    cache_key = population_cache_key(iso3pays, gdf_health)
     if cache_key not in st.session_state or st.session_state[cache_key] is None:
         with st.spinner("📥 Enrichissement WorldPop..."):
             dfpopulation = worldpop_malaria_stats(gdf_health, gee_ok)
@@ -1758,8 +1839,13 @@ with tab1:
 
         # ── Incidence & Taux d'Attaque (si population disponible) ──────
         iso3pays = st.session_state.get("iso3pays_courant", None)
-        cache_key_pop = f"enrichi_{iso3pays}" if iso3pays else "enrichi_upload"
-        _df_pop_kpi = st.session_state.get(cache_key_pop)
+        # même dérivation que lors de l'enrichissement, sinon la clé ne
+        # correspond à aucune entrée et les KPI d'incidence restent vides
+        _gdf_cle = st.session_state.get("gdf_health")
+        cache_key_pop = population_cache_key(iso3pays, _gdf_cle) \
+            if _gdf_cle is not None else None
+        _df_pop_kpi = (st.session_state.get(cache_key_pop)
+                       if cache_key_pop else None)
         if _df_pop_kpi is not None and not _df_pop_kpi.empty and "Pop_Totale" in _df_pop_kpi.columns:
             _pop_filtre = _df_pop_kpi.copy()
             if area_selected:

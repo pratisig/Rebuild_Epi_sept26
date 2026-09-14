@@ -403,9 +403,14 @@ ACTIONS = [
      "WorldPop sans filtre d'année",
      "`mosaic()` est appelé sans filtre temporel : la mosaïque mélange plusieurs "
      "millésimes de population.",
-     "Filtrer sur l'année (`ee.Filter.date`) et interpoler entre deux millésimes.",
-     "app_paludisme.py, extraction GEE",
-     "Mineur", "0,5 j", "⚠️ À faire"),
+     "Filtrer sur l'année civile avant la mosaïque. Un helper partagé "
+     "(`epi_app_bridge.worldpop_mosaic`) détermine le dernier millésime "
+     "disponible, filtre la collection sur cette année, et retombe sur la "
+     "mosaïque non filtrée avec un avertissement explicite si le millésime ne "
+     "peut pas être déterminé ou si l'année demandée est absente. Le millésime "
+     "retenu est affiché à l'utilisateur.",
+     "epi_app_bridge.worldpop_mosaic ; app_paludisme.py l. 327 ; app_rougeole.py l. 913",
+     "Mineur", "0,5 j", "✅ Corrigé (5 chemins vérifiés sur module simulé)"),
 
     ("D4", "P2 — Mineur",
      "Calcul de surface sans effet",
@@ -420,10 +425,14 @@ ACTIONS = [
      "Géométries non polygonales ignorées silencieusement",
      "Les extracteurs GEE n'utilisent que `geom.exterior` : les MultiPolygon et "
      "GeometryCollection sont ignorés sans avertissement.",
-     "Gérer tous les types de géométrie via `shapely.ops.unary_union` et journaliser "
-     "les entités écartées.",
-     "app_paludisme.py, extracteurs GEE",
-     "Mineur", "0,5 j", "⚠️ À faire"),
+     "Ramener toute géométrie à une liste aplatie de polygones (Polygon, "
+     "MultiPolygon, GeometryCollection traités récursivement), **conserver les "
+     "anneaux intérieurs** — l'ancien code n'utilisait que `exterior.coords` et "
+     "comptait donc les enclaves et les lacs comme de la surface habitée — et "
+     "signaler à l'utilisateur les aires écartées au lieu de les ignorer en "
+     "silence.",
+     "app_paludisme.py, `worldpop_malaria_stats`",
+     "Mineur", "0,5 j", "✅ Corrigé (vérifié sur 6 types de géométrie)"),
 
     # ── E. Modélisation ─────────────────────────────────────────────────
     ("E1", "P0 — Bloquant",
@@ -503,9 +512,12 @@ ACTIONS = [
      "Cache construit avant la relecture des données",
      "`cache_key = f\"enrichi_{iso3pays}\"` est calculé avant la relecture effective "
      "du fichier : deux jeux de données différents partagent la même clé.",
-     "Inclure une empreinte du contenu (empreinte de hachage) dans la clé de cache.",
-     "app_paludisme.py ≈ l. 1429 et 1459",
-     "Mineur", "0,5 j", "⚠️ À faire"),
+     "Inclure une empreinte du contenu dans la clé : nombre d'aires et liste "
+     "triée de leurs identifiants, hachés. La clé reste reproductible, "
+     "insensible à l'ordre des lignes, et change dès que le référentiel change.",
+     "`population_cache_key` (app_paludisme.py l. 241), appelée l. 1461 et 1791",
+     "Mineur", "0,5 j", "✅ Corrigé (vérifié : 72 aires et 40 aires du même pays "
+     "donnent deux clés distinctes)"),
 
     # ── F. Module rougeole ──────────────────────────────────────────────
     ("F1", "P0 — Bloquant",
@@ -550,10 +562,15 @@ ACTIONS = [
      "`CoefClimatique = Humidite_Moy × 0,5` et `Saison_Seche_Humidite = rh_mean × 0,7` "
      "sont des multiples exacts de la même variable. Le climat est une moyenne par aire, "
      "constante dans le temps : il ne peut expliquer aucune dynamique.",
-     "Supprimer les variables redondantes, et introduire des covariables climatiques "
-     "véritablement temporelles (précipitations, température, humidité par semaine).",
-     "app_rougeole.py ≈ l. 2049-2053",
-     "Majeur", "1 j", "⚠️ Partiel"),
+     "Supprimer les variables redondantes, et introduire des covariables "
+     "climatiques véritablement temporelles (précipitations, température, "
+     "humidité par semaine).",
+     "app_rougeole.py, enrichissement l. 1157-1179",
+     "Majeur", "1 j",
+     "⚠️ Partiel — la colinéarité a disparu du chemin du modèle "
+     "(`CoefClimatique` n'existe plus, `Saison_Seche_Humidite` n'est plus "
+     "retenue parmi les 44 variables) ; le climat reste invariant dans le temps, "
+     "ce qui suppose des données climatiques hebdomadaires réelles"),
 
     ("F6", "P2 — Mineur",
      "Prévision récursive dégradée",
@@ -649,9 +666,18 @@ ACTIONS = [
      "Sous-applications chargées par `exec()`",
      "`main_app.py` exécute le code source des sous-applications par `exec()`. Aucune "
      "isolation, aucune vérification d'intégrité, débogage impossible.",
-     "Utiliser `runpy.run_path` ou un import standard, avec contrôle d'intégrité.",
-     "main_app.py",
-     "Majeur", "1 j", "⚠️ À faire"),
+     "Remplacer `exec()` par un chargement qui nomme le fichier réel dans les "
+     "tracebacks. Attention : la transformation actuelle du source n'est pas "
+     "gratuite — elle retire les appels `st.set_page_config` des "
+     "sous-applications, Streamlit n'en autorisant qu'un par exécution. Un "
+     "basculement naïf vers `runpy.run_path` casserait donc le portail.",
+     "main_app.py l. 164-180",
+     "Majeur", "1 j",
+     "⚠️ À faire — non corrigé volontairement : le chemin de chargement des "
+     "sous-applications ne s'exécute qu'après authentification et sélection "
+     "d'une page, ce que le cadre de test utilisé ici ne permet pas d'atteindre. "
+     "Une modification non vérifiable de bout en bout du point d'entrée "
+     "présente plus de risque que le défaut qu'elle corrige."),
 
     ("I3", "P1 — Majeur",
      "Aucun test, aucune fixation des versions",
@@ -666,9 +692,11 @@ ACTIONS = [
      "Fichiers de données corrompus engagés",
      "`data/ao_hlthArea1.zip` fait 2 octets et `data/m` fait 1 octet : des artefacts "
      "de téléchargement interrompu sont engagés dans le dépôt.",
-     "Les supprimer, et stocker les référentiels géographiques en dehors du dépôt.",
+     "Les supprimer après avoir vérifié leur contenu (`\\r\\n` et `\\n`) et "
+     "l'absence de toute référence dans le code ; le référentiel valide "
+     "(`ao_hlthArea.zip`, en-tête `PK\\x03\\x04`, 775 aires lues) est conservé.",
      "data/",
-     "Mineur", "0,5 j", "⚠️ À faire"),
+     "Mineur", "0,5 j", "✅ Corrigé"),
 ]
 
 
@@ -1254,11 +1282,14 @@ def build(out_path):
 
     bloc_diag(21, "Calcul de surface sans effet et géométries ignorées (D4, D5)",
               "app_paludisme.py, extracteurs",
-              "ee.Image.pixelArea().divide(10000) sur une image à 100 m ne correspond à "
-              "aucune unité utile. Les extracteurs n'utilisent que geom.exterior : les "
-              "MultiPolygon et GeometryCollection sont ignorés sans avertissement.",
-              consequence="Des aires de santé sont silencieusement exclues de "
-                          "l'enrichissement.")
+              "Les extracteurs n'utilisaient que `geom.exterior` : les anneaux "
+              "intérieurs (enclaves, lacs) étaient comptés comme de la surface "
+              "habitée, et toute géométrie qui n'était ni Polygon ni MultiPolygon "
+              "était écartée par un `continue` silencieux. Par ailleurs la "
+              "collection WorldPop était mosaïquée sans filtre d'année.",
+              consequence="Des aires de santé étaient silencieusement exclues de "
+                          "l'enrichissement, et les surfaces comportant une enclave "
+                          "étaient surestimées. Les deux points sont corrigés.")
 
     # --- 4.6 déterminisme
     titre(doc, "4.6 Déterminisme et reproductibilité", 2)
@@ -1771,7 +1802,17 @@ def build(out_path):
 
     titre(doc, "6.3 Tests", 2)
     para(doc,
-         "Une suite de 18 tests couvre le noyau : non-effondrement du panneau, "
+         "Un test de fumée (`tools/smoke_test_apps.py`) exécute par ailleurs "
+         "chacune des quatre applications dans le runtime Streamlit réel, via le "
+         "cadre `AppTest`, et remonte toute exception. C'est un complément "
+         "indispensable au harnais : celui-ci exécute un bloc d'onglet isolé et ne "
+         "prouve pas que l'application complète démarre. Les quatre applications "
+         "(`main_app.py`, `app_manuel.py`, `app_paludisme.py`, `app_rougeole.py`) "
+         "démarrent sans exception ; les seuls messages remontés sont les invites "
+         "attendues en l'absence de données téléversées ou de compte Earth Engine.",
+         espace_apres=8)
+    para(doc,
+         "Une suite de 16 tests couvre le noyau : non-effondrement du panneau, "
          "complétion de la grille, semaine ISO 53, détection d'une perturbation de la "
          "cible, détection d'un décalage entraînement / inférence, absence de fuite du "
          "découpage temporel, ordre déterministe des variables, registre XGBoost, "
@@ -2039,7 +2080,12 @@ def build(out_path):
              ["tools/verify_integrated_rougeole.py",
               "Vérification du bloc rougeole après correction"],
              ["tests/test_epimodel.py",
-              "Suite de 18 tests, dont un test de non-régression sur le code initial"]],
+              "Suite de 16 tests, dont un test de non-régression qui exécute le "
+              "code initial et vérifie que les défauts documentés s'y produisent "
+              "toujours"],
+             ["tools/smoke_test_apps.py",
+              "Test de fumée : exécute les quatre applications dans le runtime "
+              "Streamlit réel et remonte toute exception"]],
             largeurs=[5.4, 10.6], fonte=8.5)
 
     titre(doc, "9.2 Reproduction des résultats", 2)
@@ -2054,7 +2100,8 @@ def build(out_path):
          "# Vérification du code corrigé\n"
          "python tools/verify_integrated_tab3.py\n"
          "python tools/verify_integrated_rougeole.py\n"
-         "python -m pytest tests -q\n\n"
+         "python -m pytest tests -q\n"
+         "python tools/smoke_test_apps.py\n\n"
          "# Régénération de ce rapport\n"
          "python tools/generate_audit_report.py")
 

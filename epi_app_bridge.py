@@ -503,3 +503,66 @@ def run_modelling_rougeole(panel: pd.DataFrame,
         "fitted": {k: v for k, v in fitted.items() if k != "model"},
         "_model": fitted["model"],
     }
+
+
+# ======================================================================
+# WorldPop : sélection d'un millésime unique
+# ======================================================================
+WORLDPOP_COLLECTION = "WorldPop/GP/100m/pop_age_sex"
+
+
+def worldpop_mosaic(ee_module, year: Optional[int] = None, verbose: bool = True):
+    """
+    Mosaïque WorldPop restreinte à **un seul millésime**.
+
+    **Correction (action D3 de l'audit)** : les deux applications appelaient
+    ``dataset.mosaic()`` sans filtre temporel. Or cette collection contient une
+    image par pays **et par année**, couvrant la même emprise : la mosaïque
+    superposait donc tous les millésimes et retenait, pixel par pixel, celui qui
+    arrivait en dernier — ordre non garanti. Une même aire de santé pouvait se
+    retrouver avec des pixels de 2015 et d'autres de 2020, et les taux
+    d'incidence reposaient sur des dénominateurs d'années différentes.
+
+    Comportement :
+      * ``year`` fourni  -> filtre sur l'année civile demandée ;
+      * ``year`` absent  -> dernier millésime présent dans la collection ;
+      * échec de détermination -> repli sur la mosaïque non filtrée, avec un
+        avertissement : mieux vaut une donnée approximative mais présente
+        qu'une interruption de la chaîne.
+
+    Retourne ``(image, millésime_utilisé)``.
+    """
+    ee = ee_module
+    dataset = ee.ImageCollection(WORLDPOP_COLLECTION)
+
+    if year is None:
+        try:
+            # date de début la plus récente -> millésime disponible le plus récent
+            derniere = dataset.aggregate_max("system:time_start")
+            if derniere is not None:
+                import datetime as _dt
+                year = _dt.datetime.utcfromtimestamp(int(derniere) / 1000).year
+        except Exception:
+            year = None
+
+    if year is None:
+        if verbose:
+            import warnings as _w
+            _w.warn("WorldPop : millésime indéterminé, mosaïque non filtrée "
+                    "(plusieurs années mélangées).", RuntimeWarning, stacklevel=2)
+        return dataset.mosaic(), None
+
+    debut, fin = f"{year}-01-01", f"{year + 1}-01-01"
+    filtre = dataset.filterDate(debut, fin)
+    try:
+        if filtre.size().getInfo() == 0:
+            if verbose:
+                import warnings as _w
+                _w.warn(f"WorldPop : aucune image pour {year}, repli sur la "
+                        f"mosaïque non filtrée.", RuntimeWarning, stacklevel=2)
+            return dataset.mosaic(), None
+    except Exception:
+        # size().getInfo() suppose un accès réseau : en cas d'échec on ne bloque
+        # pas la chaîne, le filtre reste appliqué.
+        pass
+    return filtre.mosaic(), year
