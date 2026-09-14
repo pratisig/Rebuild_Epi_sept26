@@ -5,6 +5,7 @@ Développée pour Médecins Sans Frontières (MSF)
 ============================================================
 """
 
+import ast
 import streamlit as st
 import os
 import yaml
@@ -22,8 +23,16 @@ st.set_page_config(
 # ============================================================
 # AUTHENTIFICATION
 # ============================================================
+# ── Emplacement des identifiants ─────────────────────────────────────────
+# Correction (action I1 de l'audit) : le chemin n'est plus codé en dur. En
+# production, les identifiants doivent vivre HORS du dépôt — variable
+# d'environnement pointant vers un fichier non versionné, ou secret monté par
+# l'orchestrateur. Le repli sur ./credentials.yaml est conservé pour le
+# développement local.
+CREDENTIALS_PATH = os.environ.get("EPI_CREDENTIALS_PATH", "credentials.yaml")
+
 try:
-    with open("credentials.yaml") as file:
+    with open(CREDENTIALS_PATH, encoding="utf-8") as file:
         config = yaml.load(file, Loader=SafeLoader)
 
     authenticator = stauth.Authenticate(
@@ -47,7 +56,13 @@ try:
         st.stop()
 
 except FileNotFoundError:
-    st.error("Fichier credentials.yaml introuvable.")
+    st.error(
+        f"Fichier d'identifiants introuvable : `{CREDENTIALS_PATH}`.\n\n"
+        "Copiez `credentials.yaml.example` vers ce chemin, renseignez un mot de "
+        "passe **haché** et une clé de cookie aléatoire, ou faites pointer la "
+        "variable d'environnement `EPI_CREDENTIALS_PATH` vers un fichier placé "
+        "hors du dépôt."
+    )
     st.stop()
 except Exception as e:
     st.error(f"Erreur d'authentification : {e}")
@@ -158,26 +173,51 @@ with st.sidebar:
 # ============================================================
 # FONCTION POUR CHARGER LES APPLICATIONS
 # ============================================================
+class _NeutralisePageConfig(ast.NodeTransformer):
+    """
+    Remplace `st.set_page_config(...)` par `pass`, en conservant sa position.
+
+    Streamlit n'autorise qu'un seul `set_page_config` par exécution : celui de
+    `main_app.py` a déjà été appliqué, ceux des sous-applications doivent donc
+    être neutralisés. Mais ils ne doivent pas être *supprimés* : retirer des
+    lignes décale toute la numérotation qui suit.
+
+    Ancien comportement (transformation textuelle ligne par ligne) : 6 lignes
+    retirées dans `app_paludisme.py`, donc des numéros de ligne faux dans les
+    tracebacks, et un saut multi-ligne détecté par un compteur `skip_next = 10`
+    arbitraire. En remplaçant l'instruction par `pass` à la même position, la
+    numérotation reste exacte.
+    """
+
+    def visit_Expr(self, node):
+        self.generic_visit(node)
+        call = node.value
+        if isinstance(call, ast.Call):
+            func = call.func
+            if isinstance(func, ast.Attribute) and func.attr == "set_page_config":
+                return ast.copy_location(ast.Pass(), node)
+        return node
+
+
 def load_app(filename):
+    """
+    Exécute une sous-application dans l'espace de noms courant.
+
+    Correction (action I2 de l'audit) : le code est compilé avec son nom de
+    fichier réel. Auparavant, `exec()` sur une chaîne anonyme faisait apparaître
+    `File "<string>", line N` dans les tracebacks, sans indication du fichier ni
+    numéro de ligne fiable — un dysfonctionnement en production était impossible
+    à localiser. Le fichier est désormais nommé et la numérotation exacte.
+    """
     try:
         if os.path.exists(filename):
             with open(filename, 'r', encoding='utf-8') as f:
                 code = f.read()
-            lines = code.split('\n')
-            cleaned_lines = []
-            skip_next = 0
-            for line in lines:
-                if skip_next > 0:
-                    skip_next -= 1
-                    if ')' in line:
-                        skip_next = 0
-                    continue
-                if 'st.set_page_config' in line:
-                    if ')' not in line:
-                        skip_next = 10
-                    continue
-                cleaned_lines.append(line)
-            exec('\n'.join(cleaned_lines), globals())
+            arbre = _NeutralisePageConfig().visit(
+                ast.parse(code, filename=filename)
+            )
+            ast.fix_missing_locations(arbre)
+            exec(compile(arbre, filename=filename, mode="exec"), globals())
         else:
             st.error(f"❌ Fichier '{filename}' introuvable")
             if st.button("🏠 Retour à l'accueil"):

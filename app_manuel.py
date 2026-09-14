@@ -490,9 +490,13 @@ with tab_palu:
                 </li>
                 <li><b>Prédictions long terme</b> : Plus c'est loin, moins c'est précis
                     <ul>
-                        <li>Fiable : 1-4 semaines (R² > 0.80)</li>
-                        <li>Acceptable : 1-2 mois (R² > 0.65)</li>
-                        <li>Indicatif : 3-6 mois (R² > 0.50)</li>
+                        <li>1 à 4 semaines : horizon recommandé</li>
+                        <li>1 à 2 mois : indicatif, à interpréter avec prudence</li>
+                        <li>au-delà : le modèle extrapole une tendance, il ne prédit
+                            plus une dynamique épidémique</li>
+                        <li>Ces horizons sont des ordres de grandeur. La précision
+                            effective est celle que rapportent le CV‑R² et le MAE CV
+                            après entraînement sur vos données.</li>
                     </ul>
                 </li>
                 <li><b>Événements exceptionnels</b> : Le modèle ne prédit pas :
@@ -904,8 +908,15 @@ with tab_rougeole:
                 <li><b>Données historiques</b> : Au moins 6 mois (26 semaines) pour capturer saisonnalité</li>
                 <li><b>WorldPop essentiel</b> : Population enfants 0-14 ans = calcul taux d'attaque précis</li>
                 <li><b>Couverture vaccinale</b> : Permet d'expliquer 60-80% des flambées (zones sous-vaccinées)</li>
-                <li><b>Gradient Boosting</b> : Meilleur algorithme pour rougeole (R² > 0.85 typique)</li>
-                <li><b>Prédictions court terme</b> : 2-4 semaines très fiables (R² > 0.90)</li>
+                <li><b>Algorithme</b> : XGBoost est proposé par défaut. Les essais
+                    menés lors de l'audit montrent que les six algorithmes disponibles
+                    se tiennent en quelques pour cent les uns des autres — le choix de
+                    l'algorithme importe beaucoup moins que la qualité des données et
+                    du protocole de validation.</li>
+                <li><b>Prédictions court terme</b> : 1 à 4 semaines. La précision réelle
+                    dépend de la régularité de la notification ; aucune valeur de R²
+                    n'est garantie à l'avance. Fiez-vous au CV‑R² et au MAE CV affichés
+                    après entraînement, pas à une valeur annoncée.</li>
                 <li><b>Saisonnalité</b> : Pics hivernaux (janvier-mars) en Afrique de l'Ouest</li>
             </ul>
         </div>
@@ -1574,14 +1585,30 @@ with tab_glossaire:
             <p>Racine carrée de la moyenne des erreurs au carré, pénalise davantage les grosses erreurs.</p>
             <h4>Validation croisée (CV‑R² ± σ)</h4>
             <ul>
-                <li>Les données sont découpées en segments temporels (TimeSeriesSplit).</li>
-                <li>On entraîne sur le passé et on teste sur le futur pour chaque segment.</li>
-                <li>On calcule le <b>R² moyen</b> (CV‑R²) et son <b>écart-type</b> (σ).</li>
+                <li>Les données sont découpées en <b>blocs temporels</b> : chaque bloc
+                    de test est strictement postérieur à son bloc d'entraînement.</li>
+                <li>Une <b>période d'embargo</b> sépare l'entraînement du test, pour
+                    tenir compte du délai de notification et de la durée d'incubation.</li>
+                <li>On calcule le <b>R² moyen</b> (CV‑R²) et son <b>écart-type</b> (σ),
+                    ainsi que le <b>MAE CV</b> — la métrique la plus robuste sur des
+                    comptages très dispersés.</li>
+                <li>⚠️ Le <b>R² in-sample</b> affiché à côté est mesuré sur les données
+                    d'entraînement : il est toujours optimiste et ne doit pas servir à
+                    juger le modèle. C'est le <b>CV‑R²</b> qui compte.</li>
             </ul>
             <p><b>Règle pratique :</b></p>
             <ul>
-                <li><b>R² test &gt; 0.85</b> et <b>CV‑R² &gt; 0.80</b> → modèle jugé <b>fiable</b>.</li>
-                <li><b>R² test &lt; 0.70</b> → signal pour vérifier la qualité des données et les variables.</li>
+                <li>Juger sur le <b>CV‑R²</b> et le <b>MAE CV</b>, jamais sur le R²
+                    in-sample.</li>
+                <li>Comparer toujours au <b>modèle de référence</b> (naïf saisonnier :
+                    même semaine l'an dernier). Un CV‑R² élevé sans gain sur cette
+                    référence ne signifie pas que le modèle apporte quelque chose.</li>
+                <li>Vérifier le <b>rapport total prédit ÷ total observé</b> : il doit
+                    être proche de 1. Un modèle peut avoir un bon R² et se tromper
+                    systématiquement de niveau.</li>
+                <li>Sur un panneau regroupant des aires de tailles très différentes, le
+                    R² est dominé par les écarts entre aires : le <b>MAE rapporté à la
+                    moyenne observée</b> est plus parlant.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)

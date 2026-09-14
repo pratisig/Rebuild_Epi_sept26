@@ -8,8 +8,6 @@ import geopandas as gpd
 from datetime import datetime, timedelta
 import requests
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-import epimodel as em
-import epi_app_bridge
 from sklearn.linear_model import Ridge, Lasso
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.preprocessing import LabelEncoder, StandardScaler, MinMaxScaler
@@ -337,27 +335,26 @@ st.sidebar.info(f"📆 Prédiction sur **{n_weeks_pred} semaines épidémiologiq
 
 # Choix du modèle
 st.sidebar.subheader("🤖 Modèle de Prédiction")
-_dispo_rougeole = em.available_models()
-_labels_rougeole = {m: em.MODEL_REGISTRY[m]["label"] for m in _dispo_rougeole}
 modele_choisi = st.sidebar.selectbox(
     "Choisissez votre algorithme",
-    _dispo_rougeole,
-    index=_dispo_rougeole.index("XGBoost") if "XGBoost" in _dispo_rougeole else 0,
-    format_func=lambda m: _labels_rougeole.get(m, m),
-    help="Sélectionnez l'algorithme de machine learning pour la prédiction",
-    key="rougeole_algo"
+    [
+        "GradientBoosting (Recommandé)",
+        "RandomForest",
+        "Ridge Regression",
+        "Lasso Regression",
+        "Decision Tree"
+    ],
+    help="Sélectionnez l'algorithme de machine learning pour la prédiction"
 )
-st.sidebar.markdown(
-    f'<div class="model-hint">{em.describe_model(modele_choisi)}</div>',
-    unsafe_allow_html=True)
 
-objectif_rougeole = st.sidebar.selectbox(
-    "Objectif de perte",
-    ["Poisson (comptages — recommandé)", "Erreur quadratique (historique)"],
-    help="Les cas de rougeole sont des comptages : leur variance croît avec la "
-         "moyenne. L'objectif Poisson est mieux spécifié.",
-    key="rougeole_objectif"
-)
+model_hints = {
+    "GradientBoosting (Recommandé)": "🎯 **Gradient Boosting** : Très performant pour les séries temporelles. Combine plusieurs modèles faibles pour créer un modèle fort. Excellent pour capturer les relations non-linéaires. Recommandé pour la surveillance épidémiologique.",
+    "RandomForest": "🌳 **Random Forest** : Ensemble d'arbres de décision. Robuste aux valeurs aberrantes et aux données manquantes. Bon pour les interactions complexes entre variables.",
+    "Ridge Regression": "📊 **Ridge Regression** : Régression linéaire avec régularisation L2. Simple et rapide. Idéal pour relations linéaires. Moins performant sur données non-linéaires.",
+    "Lasso Regression": "🎯 **Lasso Regression** : Régularisation L1 avec sélection automatique des variables. Utile quand beaucoup de variables peu importantes. Simplifie le modèle.",
+    "Decision Tree": "🌲 **Decision Tree** : Arbre de décision unique. Simple à interpréter mais risque de sur-apprentissage. Moins robuste que les méthodes d'ensemble."
+}
+st.sidebar.markdown(f'<div class="model-hint">{model_hints[modele_choisi]}</div>', unsafe_allow_html=True)
 
 # ── MODE EXPERT — Importance des variables (RESTAURÉ) ─────────
 st.sidebar.subheader("⚖️ Importance des Variables")
@@ -908,11 +905,8 @@ def worldpop_children_stats(_sa_gdf, use_gee, cache_key=""):
         status_text = st.sidebar.empty()
 
         status_text.text("📥 Chargement WorldPop...")
-        # Correction D3 : mosaïque restreinte à un millésime unique (voir
-        # epi_app_bridge.worldpop_mosaic pour le détail du défaut).
-        pop_img, _wp_annee = epi_app_bridge.worldpop_mosaic(ee)
-        if _wp_annee:
-            st.sidebar.caption(f"WorldPop : millésime {_wp_annee}")
+        dataset = ee.ImageCollection("WorldPop/GP/100m/pop_age_sex")
+        pop_img = dataset.mosaic()
 
         male_bands = ["M_0", "M_1", "M_5", "M_10"]
         female_bands = ["F_0", "F_1", "F_5", "F_10"]
@@ -1989,9 +1983,10 @@ with tab3:
         st.info("👆 Cliquez sur le bouton ci-dessus pour lancer la modélisation")
         st.stop()
 
-    # ── Agrégation hebdomadaire par aire (contrat historique conservé) ───
+    # ── Préparation des features par aire et semaine ───────────
     weekly_features = df.groupby(["Aire_Sante", "Annee", "Semaine_Epi"]).agg(
         CasObserves=("ID_Cas", "count"),
+        NonVaccines=("Statut_Vaccinal", lambda x: (x == "Non").mean() * 100),
         AgeMoyen=("Age_Mois", "mean")
     ).reset_index()
 
@@ -2002,147 +1997,265 @@ with tab3:
     )
     weekly_features = weekly_features.sort_values(["Aire_Sante", "sort_key"]).reset_index(drop=True)
 
-    if len(weekly_features) < 10:
+    # Lags par aire
+    weekly_features = weekly_features.sort_values(["Aire_Sante", "sort_key"])
+    for lag in [1, 2, 3, 4]:
+        weekly_features[f"Lag{lag}"] = weekly_features.groupby("Aire_Sante")["CasObserves"].shift(lag)
+    weekly_features["RollingMean4"] = weekly_features.groupby("Aire_Sante")["CasObserves"] \
+        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).mean())
+    weekly_features["RollingStd4"] = weekly_features.groupby("Aire_Sante")["CasObserves"] \
+        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).std().fillna(0))
+    weekly_features["SemaineSin"] = np.sin(2 * np.pi * weekly_features["Semaine_Epi"] / 52)
+    weekly_features["SemaineCos"] = np.cos(2 * np.pi * weekly_features["Semaine_Epi"] / 52)
+
+    # Merge variables externes par aire
+    cols_merge = ["health_area", "Pop_Totale", "Pop_Enfants", "Densite_Pop",
+              "Densite_Enfants", "Urbanisation", "Temperature_Moy",
+              "Humidite_Moy", "Saison_Seche_Humidite", "Taux_Vaccination"]
+
+    cols_merge_dispo = [c for c in cols_merge if c in sa_gdf_enrichi.columns]
+    weekly_features = weekly_features.merge(
+        sa_gdf_enrichi[cols_merge_dispo],
+        left_on="Aire_Sante", right_on="health_area", how="left"
+    )
+    # ✅ CORRECTION : conversion + variables dérivées vaccination
+    if "Taux_Vaccination" in weekly_features.columns:
+        weekly_features["Taux_Vaccination"] = pd.to_numeric(
+            weekly_features["Taux_Vaccination"], errors="coerce"
+        )
+        weekly_features["Non_Vaccines_Estimes"] = (
+            (1 - weekly_features["Taux_Vaccination"].fillna(100) / 100)
+            * weekly_features["Pop_Enfants"].fillna(0)
+        )
+        weekly_features["Gap_Immunite_Collective"] = (
+            95 - weekly_features["Taux_Vaccination"]
+        ).clip(lower=0)
+        weekly_features["Zone_Sous_Seuil"] = (
+            weekly_features["Taux_Vaccination"].fillna(0) < 95
+        ).astype(int)
+    else:
+        weekly_features["Non_Vaccines_Estimes"] = np.nan
+        weekly_features["Gap_Immunite_Collective"] = np.nan
+        weekly_features["Zone_Sous_Seuil"] = 0
+    # Encodage urbanisation
+    le_urban = LabelEncoder()
+    weekly_features["Urbanisation"] = weekly_features["Urbanisation"].fillna("Rural").astype(str)
+    weekly_features["UrbanEncoded"] = le_urban.fit_transform(weekly_features["Urbanisation"])
+
+    # Coefficient climatique
+    if "Humidite_Moy" in weekly_features.columns:
+        weekly_features["CoefClimatique"] = pd.to_numeric(
+            weekly_features["Humidite_Moy"], errors="coerce").fillna(0) * 0.5
+    else:
+        weekly_features["CoefClimatique"] = 0
+
+
+    # Colonnes features
+    feature_cols = [
+        "Lag1", "Lag2", "Lag3", "Lag4",
+        "RollingMean4", "RollingStd4",
+        "SemaineSin", "SemaineCos",
+        "NonVaccines",
+        "Taux_Vaccination",           
+        "Non_Vaccines_Estimes",        
+        "Gap_Immunite_Collective",     
+        "Zone_Sous_Seuil",             
+        "Pop_Enfants", "Densite_Pop",
+        "UrbanEncoded", "CoefClimatique"
+    ]
+    feature_cols = [c for c in feature_cols if c in weekly_features.columns]
+
+    df_model = weekly_features.dropna(subset=["CasObserves"]).copy()
+    if len(df_model) < 10:
         st.error("❌ Données insuffisantes pour entraîner le modèle "
-                 f"(seulement {len(weekly_features)} lignes hebdomadaires valides). "
+                 f"(seulement {len(df_model)} lignes valides). "
                  "Réduisez les filtres temporels ou utilisez le mode démo.")
         st.stop()
+    for col in feature_cols:
+        df_model[col] = pd.to_numeric(df_model[col], errors="coerce")
 
-    # ── Modélisation via le noyau `epimodel` ─────────────────────────────
-    # Une seule fonction construit les variables, à l'entraînement comme à la
-    # prévision : plus aucun décalage train/inférence. Le panneau est complété
-    # (aires x semaines, zéros explicites) et l'index temporel est continu,
-    # donc les années ne sont plus écrasées entre elles.
-    with st.spinner("🤖 Préparation du panneau et entraînement…"):
+    imputer = SimpleImputer(strategy="median")
+    X = imputer.fit_transform(df_model[feature_cols])
+    y = df_model["CasObserves"].values
+
+    # Normalisation poids manuels si mode expert
+    if mode_importance == "👨‍⚕️ Manuel (Expert)" and poids_normalises:
+        feature_weights = np.ones(len(feature_cols))
+        for i, feat in enumerate(feature_cols):
+            if any(k in feat for k in ["Lag", "Rolling"]):
+                feature_weights[i] = poids_normalises.get("Historique_Cas", 1.0) * len(feature_cols)
+            elif any(k in feat for k in ["Vaccination", "NonVaccines"]):
+                feature_weights[i] = poids_normalises.get("Vaccination", 1.0) * len(feature_cols)
+            elif any(k in feat for k in ["Pop", "Densite"]):
+                feature_weights[i] = poids_normalises.get("Demographie", 1.0) * len(feature_cols)
+            elif "Urban" in feat:
+                feature_weights[i] = poids_normalises.get("Urbanisation", 1.0) * len(feature_cols)
+            elif any(k in feat for k in ["Temp", "Hum", "Saison", "Climat", "Sin", "Cos"]):
+                feature_weights[i] = poids_normalises.get("Climat", 1.0) * len(feature_cols)
+        X = X * feature_weights
+
+    # ── Entraînement du modèle ─────────────────────────────────
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    models_map = {
+        "GradientBoosting (Recommandé)": GradientBoostingRegressor(
+            n_estimators=200, learning_rate=0.05, max_depth=4,
+            min_samples_leaf=3, random_state=42),
+        "RandomForest": RandomForestRegressor(
+            n_estimators=200, max_depth=8, min_samples_leaf=3, random_state=42),
+        "Ridge Regression": Ridge(alpha=1.0),
+        "Lasso Regression": Lasso(alpha=0.1, max_iter=2000),
+        "Decision Tree": DecisionTreeRegressor(max_depth=6, min_samples_leaf=5, random_state=42)
+    }
+    model = models_map[modele_choisi]
+    model.fit(X_train, y_train)
+    y_pred_test = np.maximum(model.predict(X_test), 0)
+
+    from sklearn.metrics import mean_absolute_error, r2_score
+    mae   = mean_absolute_error(y_test, y_pred_test)
+    r2    = r2_score(y_test, y_pred_test)
+    rmse  = np.sqrt(np.mean((y_test - y_pred_test) ** 2))
+    cv_scores = cross_val_score(model, X, y, cv=min(5, len(X) // 3), scoring="r2")
+    cv_mean = cv_scores.mean()
+    cv_std  = cv_scores.std()
+
+    # ── Métriques du modèle ────────────────────────────────────
+    st.subheader("📊 Performance du Modèle")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("R² test", f"{r2:.3f}", help="1.0 = parfait, >0.7 = bon")
+    with col2:
+        st.metric("MAE", f"{mae:.1f} cas", help="Erreur absolue moyenne")
+    with col3:
+        st.metric("RMSE", f"{rmse:.1f} cas")
+    with col4:
+        st.metric("CV R² moyen", f"{cv_mean:.3f} ±{cv_std:.3f}")
+
+    # ── Importance des variables ───────────────────────────────
+    if hasattr(model, "feature_importances_"):
+        st.subheader("🔍 Importance des Variables")
+    
+        # IMPORTANT: SimpleImputer peut supprimer des colonnes 100% NaN,
+        # donc il faut récupérer les features réellement utilisées.
         try:
-            panel_r, design_builder_r, static_r, prep_info_r = \
-                epi_app_bridge.prepare_rougeole(
-                    df_cases_weekly=weekly_features,
-                    sa_gdf_enrichi=sa_gdf_enrichi,
-                    df_vaccination=vaccination_df,
-                    df_linelist=df,
-                    area_col="Aire_Sante",
-                )
-            res_r = epi_app_bridge.run_modelling_rougeole(
-                panel=panel_r,
-                design_builder=design_builder_r,
-                algo=modele_choisi,
-                n_weeks_pred=n_weeks_pred,
-                objective=("poisson" if objectif_rougeole.startswith("Poisson")
-                           else "squared_error"),
+            feature_cols_used = list(imputer.get_feature_names_out(feature_cols))
+        except Exception:
+            feature_cols_used = feature_cols
+    
+        # Sécurisation finale si jamais longueurs différentes
+        n_imp = len(model.feature_importances_)
+        feature_cols_used = feature_cols_used[:n_imp]
+    
+        imp_df = pd.DataFrame({
+            "Variable": feature_cols_used,
+            "Importance": model.feature_importances_
+        }).sort_values("Importance", ascending=True)
+    
+        fig_imp = px.bar(
+            imp_df, x="Importance", y="Variable", orientation="h",
+            title="Importance des variables — modèle ML",
+            color="Importance", color_continuous_scale="Blues"
+        )
+        st.plotly_chart(fig_imp, use_container_width=True)
+
+    # ── Génération des prédictions futures ─────────────────────
+    futures_info = generer_semaines_futures(derniere_semaine_epi, derniere_annee, n_weeks_pred)
+    futures_rows = []
+
+    for aire in df_model["Aire_Sante"].unique():
+        aire_hist = weekly_features[weekly_features["Aire_Sante"] == aire].copy()
+        aire_hist = aire_hist.sort_values("sort_key")
+        aire_meta = sa_gdf_enrichi[sa_gdf_enrichi["health_area"] == aire]
+
+        if len(aire_meta) > 0:
+            pop_enfants_aire = float(aire_meta["Pop_Enfants"].iloc[0]) \
+                if "Pop_Enfants" in aire_meta.columns else np.nan
+            densite_aire = float(aire_meta["Densite_Pop"].iloc[0]) \
+                if "Densite_Pop" in aire_meta.columns else np.nan
+            try:
+                urban_enc_aire = le_urban.transform(
+                    [str(aire_meta["Urbanisation"].iloc[0])])[0] \
+                    if "Urbanisation" in aire_meta.columns else 0
+            except ValueError:
+                urban_enc_aire = 0
+            taux_vacc_aire = float(aire_meta["Taux_Vaccination"].iloc[0]) \
+                if "Taux_Vaccination" in aire_meta.columns \
+                and pd.notna(aire_meta["Taux_Vaccination"].iloc[0]) else np.nan
+            pop_enf_aire = float(aire_meta["Pop_Enfants"].iloc[0]) \
+                if "Pop_Enfants" in aire_meta.columns \
+                and pd.notna(aire_meta["Pop_Enfants"].iloc[0]) else np.nan
+            non_vacc_est_aire = (
+                (1 - taux_vacc_aire / 100) * pop_enf_aire
+                if not (np.isnan(taux_vacc_aire or float('nan'))
+                        or np.isnan(pop_enf_aire or float('nan'))) else np.nan
             )
-        except Exception as _e:
-            st.error(f"❌ Modélisation impossible : {_e}")
-            import traceback
-            st.code(traceback.format_exc())
-            st.stop()
+            gap_immunite_aire = max(0, 95 - taux_vacc_aire) \
+                if not np.isnan(taux_vacc_aire or float('nan')) else np.nan
+            zone_sous_seuil_aire = int(taux_vacc_aire < 95) \
+                if not np.isnan(taux_vacc_aire or float('nan')) else 0
+            coef_clim_aire = (
+                float(aire_meta["Humidite_Moy"].iloc[0]) * 0.5
+                if "Humidite_Moy" in aire_meta.columns
+                and pd.notna(aire_meta["Humidite_Moy"].iloc[0])
+                else 0
+            )
+            non_vacc_aire = float(aire_hist["NonVaccines"].mean()) if len(aire_hist) > 0 else 0
+        else:
+            pop_enfants_aire = densite_aire = taux_vacc_aire = np.nan
+            urban_enc_aire = coef_clim_aire = non_vacc_aire = 0
 
-    st.session_state["rougeole_model"] = res_r
-    st.session_state["rougeole_panel_info"] = prep_info_r
+        recent_cases = aire_hist["CasObserves"].tail(4).tolist()
+        while len(recent_cases) < 4:
+            recent_cases.insert(0, 0)
 
-    future_df = res_r["future_df"]
-    metrics_r = res_r["metrics"]
-    feature_cols = res_r["feature_cols"]
-    mae = metrics_r["mae"]
-    rmse = metrics_r["rmse"]
-    r2 = metrics_r["r2"]
-    cv_mean = metrics_r["cv_r2_mean"]
-    cv_std = metrics_r["cv_r2_std"]
-    cv_mae = metrics_r["cv_mae_mean"]
+        for fw in futures_info:
+            sem = fw["SemaineEpi"]
+            an  = fw["Annee"]
+            lbl = fw["SemaineLabel"]
 
-    if future_df is None or future_df.empty:
+            lag1, lag2, lag3, lag4 = recent_cases[-1], recent_cases[-2], recent_cases[-3], recent_cases[-4]
+            roll_mean = np.mean(recent_cases[-4:])
+            roll_std  = np.std(recent_cases[-4:])
+            sem_sin   = np.sin(2 * np.pi * sem / 52)
+            sem_cos   = np.cos(2 * np.pi * sem / 52)
+
+            row_feat = {
+                "Lag1": lag1, "Lag2": lag2, "Lag3": lag3, "Lag4": lag4,
+                "RollingMean4": roll_mean, "RollingStd4": roll_std,
+                "SemaineSin": sem_sin, "SemaineCos": sem_cos,
+                "NonVaccines": non_vacc_aire,
+                "Taux_Vaccination": taux_vacc_aire,
+                "Non_Vaccines_Estimes": non_vacc_est_aire,      
+                "Gap_Immunite_Collective": gap_immunite_aire,   
+                "Zone_Sous_Seuil": zone_sous_seuil_aire,       
+                "Pop_Enfants": pop_enfants_aire, "Densite_Pop": densite_aire,
+                "UrbanEncoded": urban_enc_aire, "CoefClimatique": coef_clim_aire
+            }
+            X_fut = np.array([[row_feat.get(c, 0) for c in feature_cols]])
+            X_fut = imputer.transform(X_fut)
+
+            if mode_importance == "👨‍⚕️ Manuel (Expert)" and poids_normalises:
+                X_fut = X_fut * feature_weights
+
+            cas_pred = float(max(0, model.predict(X_fut)[0]))
+            futures_rows.append({
+                "Aire_Sante": aire, "SemaineLabel": lbl,
+                "SemaineEpi": sem, "Annee": an,
+                "sort_key": fw["sort_key"], "CasPredits": round(cas_pred, 1)
+            })
+            recent_cases.append(cas_pred)
+            recent_cases = recent_cases[-4:]
+
+    if not futures_rows:
         st.error("❌ Aucune prédiction générée. Vérifiez que les données contiennent "
                  "suffisamment de semaines (minimum 4) par aire de santé.")
         st.stop()
 
-    # ── Métriques du modèle ────────────────────────────────────────────
-    st.subheader("📊 Performance du Modèle")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("R² CV temporel", f"{cv_mean:.3f} ±{cv_std:.3f}",
-                  help="Découpage bloqué par semaine avec embargo : c'est la "
-                       "métrique de généralisation à utiliser.")
-    with col2:
-        st.metric("MAE CV", f"{cv_mae:.1f} cas",
-                  help="Erreur absolue moyenne hors échantillon (1 semaine)")
-    with col3:
-        _moy_obs = float(weekly_features["CasObserves"].mean())
-        st.metric("MAE / moyenne", f"{(cv_mae / _moy_obs * 100) if _moy_obs > 0 else float('nan'):.1f} %",
-                  help="Erreur relative à la moyenne observée")
-    with col4:
-        st.metric("R² in-sample", f"{r2:.3f}",
-                  help="⚠️ Mesuré sur les données d'entraînement : toujours optimiste")
-
-    st.caption(
-        f"🤖 {modele_choisi} · objectif **{metrics_r['objectif']}** · "
-        f"{metrics_r['n_features']} variables · {metrics_r['n_train']:,} observations "
-        f"d'entraînement. Validation : {metrics_r.get('protocole', 'temporelle bloquée par semaine')}."
-    )
-
-    # ── Diagnostic de variabilité temporelle (action F5) ──────────────
-    # Une variable constante dans le temps mais différente d'une aire à l'autre
-    # passe le filtre de sélection, car elle varie globalement. Elle n'explique
-    # pourtant aucune dynamique — ni pic, ni saison — et agit seulement comme
-    # décalage de niveau entre aires.
-    _dyn_r = res_r.get("feature_dynamics")
-    _clim_inv_r = res_r.get("climat_invariant") or []
-    if _dyn_r is not None and len(_dyn_r):
-        _n_temp_r = int((_dyn_r["role"] == "temporelle").sum())
-        _n_niv_r = int((_dyn_r["role"] == "niveau par aire").sum())
-        st.caption(
-            f"🧭 Variabilité : **{_n_temp_r}** variable(s) varient dans le temps au "
-            f"sein des aires, **{_n_niv_r}** sont des niveaux par aire (couverture "
-            f"vaccinale, urbanisation, population…) — utiles pour situer le risque, "
-            f"incapables d'expliquer une dynamique.")
-    if _clim_inv_r:
-        st.warning(
-            f"⚠️ **Climat invariant dans le temps** : {', '.join(_clim_inv_r)}. Ces "
-            f"variables sont retenues par le modèle parce qu'elles diffèrent entre "
-            f"aires, mais elles ne varient pas au fil des semaines : elles ne peuvent "
-            f"expliquer ni pic ni saison. Pour que le climat apporte de l'information "
-            f"prédictive, il faut des précipitations, températures et humidités "
-            f"**hebdomadaires** (NASA POWER, ERA5), pas des moyennes par aire.")
-    st.info(
-        "ℹ️ L'ancien « R² test » provenait d'un `train_test_split` **aléatoire** : des "
-        "semaines futures se retrouvaient dans l'entraînement, ce qui surestimait "
-        "fortement la performance. La pondération manuelle des variables (mode Expert) "
-        "était par ailleurs **sans effet** sur les arbres, invariants par mise à "
-        "l'échelle d'une variable ; elle est remplacée par une vraie sélection de "
-        "variables et un objectif de perte adapté aux comptages."
-    )
-
-    _folds_r = res_r.get("cv_folds")
-    if _folds_r is not None and len(_folds_r):
-        with st.expander("🧪 Détail de la validation temporelle par fold", expanded=False):
-            st.dataframe(
-                _folds_r[["fold", "train_weeks", "test_weeks", "n", "mae", "rmse",
-                          "r2", "bias", "agg_ratio"]].rename(columns={
-                              "fold": "Fold", "train_weeks": "Semaines entraînement",
-                              "test_weeks": "Semaines test", "n": "Obs.", "mae": "MAE",
-                              "rmse": "RMSE", "r2": "R²", "bias": "Biais",
-                              "agg_ratio": "Total prédit/observé"}),
-                hide_index=True, use_container_width=True)
-
-    # ── Importance des variables ───────────────────────────────────────
-    imp_df = res_r.get("importance")
-    if imp_df is not None and len(imp_df):
-        st.subheader("🔍 Importance des Variables")
-        _imp_show = imp_df.head(20).rename(
-            columns={"variable": "Variable", "importance": "Importance",
-                     "importance_pct": "Importance (%)"})
-        fig_imp = px.bar(
-            _imp_show.sort_values("Importance"), x="Importance", y="Variable",
-            orientation="h", title="Importance des variables — modèle ML",
-            color="Importance", color_continuous_scale="Blues"
-        )
-        st.plotly_chart(fig_imp, use_container_width=True)
-        st.caption(
-            "Les variables de couverture vaccinale, de densité d'enfants et "
-            "d'urbanisation sont des **covariables statiques** : elles expliquent les "
-            "différences structurelles de risque entre aires de santé."
-        )
-
-    # ── Génération des prédictions futures ─────────────────────────────
+    future_df = pd.DataFrame(futures_rows)
+    # Colonnes attendues
+    for col in ["Aire_Sante", "SemaineLabel", "SemaineEpi", "Annee", "sort_key", "CasPredits"]:
+        if col not in future_df.columns:
+            future_df[col] = np.nan
 
     # ── Courbe épidémique avec prédictions ─────────────────────
     st.subheader("📈 Courbe Épidémique avec Prédictions")
