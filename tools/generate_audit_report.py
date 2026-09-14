@@ -578,16 +578,36 @@ ACTIONS = [
      "Variables climatiques colinéaires et invariantes dans le temps",
      "`CoefClimatique = Humidite_Moy × 0,5` et `Saison_Seche_Humidite = rh_mean × 0,7` "
      "sont des multiples exacts de la même variable. Le climat est une moyenne par aire, "
-     "constante dans le temps : il ne peut expliquer aucune dynamique.",
-     "Supprimer les variables redondantes, et introduire des covariables "
-     "climatiques véritablement temporelles (précipitations, température, "
-     "humidité par semaine).",
-     "app_rougeole.py, enrichissement l. 1157-1179",
+     "constante dans le temps : il ne peut expliquer aucune dynamique. "
+     "Point aggravant vérifié : le filtre de sélection écarte les colonnes *globalement* "
+     "constantes, mais une variable constante dans le temps et différente d'une aire à "
+     "l'autre possède un écart-type global non nul — elle passe donc le filtre et se "
+     "trouve créditée comme pilote temporel alors qu'elle n'agit que comme décalage de "
+     "niveau entre aires.",
+     "Supprimer les variables redondantes, introduire des covariables climatiques "
+     "véritablement temporelles, et **rendre visible** la variabilité réelle de chaque "
+     "variable. Fait : `epimodel.features.describe_feature_dynamics()` classe chaque "
+     "variable selon sa variabilité *à l'intérieur de chaque aire* — `temporelle`, "
+     "`niveau par aire`, `constante`, `insuffisante` — et "
+     "`invariant_climate_variables()` liste les variables climatiques figées. Les deux "
+     "applications affichent ce diagnostic : un avertissement explicite signale que le "
+     "climat ne peut expliquer ni pic ni saison tant qu'il s'agit de moyennes par aire, "
+     "et indique la donnée nécessaire (précipitations, températures, humidités "
+     "hebdomadaires NASA POWER ou ERA5). Les variables de niveau ne sont **pas** "
+     "supprimées : l'altitude et la couverture vaccinale en sont, et elles sont "
+     "légitimes pour situer le risque. 5 tests permanents.",
+     "epimodel/features.py : `describe_feature_dynamics`, "
+     "`invariant_climate_variables` ; epi_app_bridge.py ; app_paludisme.py ; "
+     "app_rougeole.py",
      "Majeur", "1 j",
-     "⚠️ Partiel — la colinéarité a disparu du chemin du modèle "
-     "(`CoefClimatique` n'existe plus, `Saison_Seche_Humidite` n'est plus "
-     "retenue parmi les 44 variables) ; le climat reste invariant dans le temps, "
-     "ce qui suppose des données climatiques hebdomadaires réelles"),
+     "✅ Colinéarité supprimée et variabilité rendue visible — la colinéarité a "
+     "disparu du chemin du modèle (`CoefClimatique` n'existe plus, "
+     "`Saison_Seche_Humidite` n'est plus retenue) et l'utilisateur est désormais "
+     "averti quand une variable climatique ne varie pas dans le temps. "
+     "**Reste à fournir la donnée** : tant que le climat branché est une moyenne par "
+     "aire et non une série hebdomadaire, l'avertissement s'affichera — c'est son "
+     "rôle. Sa disparition est le critère d'achèvement, et il dépend d'un branchement "
+     "réel que cet environnement sans accès réseau ne peut pas réaliser."),
 
     ("F6", "P2 — Mineur",
      "Prévision récursive dégradée",

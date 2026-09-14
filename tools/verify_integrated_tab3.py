@@ -81,6 +81,33 @@ def main():
     for key in ["df_model", "df_future", "metrics", "pca_info", "feature_cols"]:
         check(f"clé '{key}' présente", key in mr)
 
+    # Diagnostic F5 : chaque variable doit être classée selon sa variabilité
+    # intra-aire, afin de distinguer les pilotes temporels des simples décalages
+    # de niveau par aire.
+    print("\n2b) Diagnostic de variabilité temporelle (F5)")
+    check("clé 'feature_dynamics' présente", "feature_dynamics" in mr)
+    check("clé 'climat_invariant' présente", "climat_invariant" in mr)
+    dyn = mr.get("feature_dynamics")
+    if dyn is not None and len(dyn):
+        check("une ligne par variable", len(dyn) == len(mr["feature_cols"]),
+              f"dyn={len(dyn)} cols={len(mr['feature_cols'])}")
+        roles = set(dyn["role"])
+        check("rôles valides",
+              roles <= {"temporelle", "niveau par aire", "constante", "insuffisante"},
+              str(sorted(roles)))
+        n_temp = int((dyn["role"] == "temporelle").sum())
+        check("des variables temporelles existent", n_temp > 0, f"n={n_temp}")
+        # les retards de cas doivent être reconnus comme temporels
+        lag1 = dyn[dyn["variable"] == "cases_lag_1"]
+        if len(lag1):
+            check("cases_lag_1 classé temporel",
+                  lag1["role"].iloc[0] == "temporelle", lag1["role"].iloc[0])
+        # l'altitude, invariante dans le temps, ne doit PAS être dite temporelle
+        alt = dyn[dyn["variable"] == "Altitude_Moy"]
+        if len(alt):
+            check("Altitude_Moy classé 'niveau par aire'",
+                  alt["role"].iloc[0] == "niveau par aire", alt["role"].iloc[0])
+
     df_future = mr["df_future"]
     metrics = mr["metrics"]
 

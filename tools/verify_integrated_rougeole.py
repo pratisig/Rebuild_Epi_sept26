@@ -160,6 +160,23 @@ def main():
     check("saisonnalité présente", "sin_week_1" in cols)
     check("retards présents", "cases_lag_1" in cols)
 
+    # Diagnostic F5 : une variable climatique figée dans le temps n'explique
+    # aucune dynamique. Le filtre de sélection ne l'écarte pas, car elle varie
+    # entre aires : le diagnostic doit donc la signaler.
+    print("\n4b) Diagnostic de variabilité temporelle (F5)")
+    check("clé 'feature_dynamics' présente", "feature_dynamics" in mr)
+    check("clé 'climat_invariant' présente", "climat_invariant" in mr)
+    dyn = mr.get("feature_dynamics")
+    if dyn is not None and len(dyn):
+        check("une ligne par variable", len(dyn) == len(cols),
+              f"dyn={len(dyn)} cols={len(cols)}")
+        check("rôles valides",
+              set(dyn["role"]) <= {"temporelle", "niveau par aire",
+                                   "constante", "insuffisante"},
+              str(sorted(set(dyn["role"]))))
+        n_temp = int((dyn["role"] == "temporelle").sum())
+        check("des variables temporelles existent", n_temp > 0, f"n={n_temp}")
+
     print("\n5) Importance des variables")
     imp = mr.get("importance")
     check("importance calculée", imp is not None and len(imp) > 0)

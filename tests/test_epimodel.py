@@ -426,3 +426,75 @@ def test_climate_availability_lag_reaches_design_matrix(panel, climate_weekly):
     b0 = base[base[aire] == first].reset_index(drop=True)
     b2 = lag2[lag2[aire] == first].reset_index(drop=True)
     assert b2["precip_api"].iloc[9] == b0["precip_api"].iloc[7]
+
+
+# ----------------------------------------------------------------------
+# Diagnostic de variabilité temporelle (action F5)
+# ----------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def dynamics_panel():
+    """
+    Panneau où chaque variable climatique joue un rôle différent : c'est le seul
+    moyen de vérifier que le diagnostic les distingue réellement.
+    """
+    rows = []
+    for i, a in enumerate(["aire_a", "aire_b"]):
+        for w in range(1, 53):
+            rows.append({
+                "health_area": a, "year": 2022, "week_": w,
+                "cases": 10 + w % 7,
+                "temp_api": 20.0 + 5 * i,     # figée dans le temps, varie entre aires
+                "precip_api": float(w),        # véritablement temporelle
+                "Altitude_Moy": 300.0 + 100 * i,
+            })
+    df = pd.DataFrame(rows)
+    df["humidity_api"] = np.nan               # entièrement vide
+    return df
+
+
+def test_dynamics_diagnostic_classifies_roles(dynamics_panel):
+    """
+    Une variable constante dans le temps mais différente entre aires n'est pas
+    globalement constante : `select_features` la conserve, et elle est créditée
+    comme pilote temporel alors qu'elle n'agit que comme décalage de niveau.
+    """
+    fc = ["temp_api", "precip_api", "humidity_api", "Altitude_Moy"]
+    diag = em.describe_feature_dynamics(dynamics_panel, feature_cols=fc)
+    roles = dict(zip(diag["variable"], diag["role"]))
+    assert roles["precip_api"] == "temporelle"
+    assert roles["temp_api"] == "niveau par aire"
+    assert roles["Altitude_Moy"] == "niveau par aire"
+    assert roles["humidity_api"] == "insuffisante"
+
+
+def test_dynamics_diagnostic_sees_within_area_variation(dynamics_panel):
+    """Le compteur de valeurs distinctes est bien intra-aire, pas global."""
+    diag = em.describe_feature_dynamics(dynamics_panel,
+                                        feature_cols=["temp_api", "precip_api"])
+    d = diag.set_index("variable")
+    assert int(d.loc["temp_api", "n_distinct_intra_aire"]) == 1
+    assert int(d.loc["precip_api", "n_distinct_intra_aire"]) == 52
+    # et pourtant temp_api a bien un écart-type global non nul
+    assert float(d.loc["temp_api", "std_global"]) > 0
+
+
+def test_invariant_climate_excludes_missing_not_only_constant(dynamics_panel):
+    """
+    Une colonne entièrement vide n'est pas invariante : elle est absente. La
+    signaler ici serait un faux diagnostic.
+    """
+    inv = em.invariant_climate_variables(dynamics_panel,
+                                         feature_cols=["temp_api", "precip_api",
+                                                       "humidity_api"])
+    assert inv == ["temp_api"]
+
+
+def test_invariant_climate_empty_when_no_feature(dynamics_panel):
+    assert em.invariant_climate_variables(dynamics_panel, feature_cols=[]) == []
+
+
+def test_globally_constant_column_is_flagged_as_constant(dynamics_panel):
+    df = dynamics_panel.copy()
+    df["temp_api"] = 20.0
+    diag = em.describe_feature_dynamics(df, feature_cols=["temp_api"])
+    assert diag["role"].iloc[0] == "constante"

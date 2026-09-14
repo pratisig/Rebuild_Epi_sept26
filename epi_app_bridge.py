@@ -269,12 +269,21 @@ def run_modelling_palu(panel: pd.DataFrame,
                      f"{embargo} semaines",
     }
 
+    # Diagnostic F5 : une variable climatique figée dans le temps n'explique
+    # aucune dynamique. Le filtre de sélection ne l'écarte pas, car elle varie
+    # entre aires : il faut donc le dire explicitement plutôt que de laisser
+    # croire que le climat pilote la prévision.
+    dyn = em.describe_feature_dynamics(df_model, feature_cols=feature_cols)
+    clim_inv = em.invariant_climate_variables(df_model, feature_cols=feature_cols)
+
     result: Dict[str, Any] = {
         "df_model": df_model,
         "df_future": fc,
         "metrics": metrics,
         "pca_info": None,          # clé conservée pour compatibilité
         "feature_cols": feature_cols,
+        "feature_dynamics": dyn,
+        "climat_invariant": clim_inv,
         "cv_folds": val.get("folds"),
         "importance": em.forecast.feature_importance(fitted, top_n=30),
         "fitted": {k: v for k, v in fitted.items() if k != "model"},
@@ -493,6 +502,12 @@ def run_modelling_rougeole(panel: pd.DataFrame,
         "objectif": ("log1p+squared_error" if log_target else objective),
     }
     _p("Terminé", 100)
+    # `fit_pipeline` ne conserve pas la matrice de conception : on la reconstruit
+    # avec le constructeur déjà figé, ce qui garantit d'inspecter exactement les
+    # variables vues par le modèle.
+    df_diag, _ = design_builder(panel)
+    dyn = em.describe_feature_dynamics(df_diag,
+                                       feature_cols=fitted["feature_cols"])
     return {
         "future_df": future_df,
         "forecast": fc,
@@ -500,6 +515,9 @@ def run_modelling_rougeole(panel: pd.DataFrame,
         "cv_folds": val.get("folds"),
         "importance": em.forecast.feature_importance(fitted, top_n=30),
         "feature_cols": fitted["feature_cols"],
+        "feature_dynamics": dyn,
+        "climat_invariant": em.invariant_climate_variables(
+            df_diag, feature_cols=fitted["feature_cols"]),
         "fitted": {k: v for k, v in fitted.items() if k != "model"},
         "_model": fitted["model"],
     }

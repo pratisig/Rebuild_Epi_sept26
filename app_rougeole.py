@@ -2078,6 +2078,30 @@ with tab3:
         f"{metrics_r['n_features']} variables · {metrics_r['n_train']:,} observations "
         f"d'entraînement. Validation : {metrics_r.get('protocole', 'temporelle bloquée par semaine')}."
     )
+
+    # ── Diagnostic de variabilité temporelle (action F5) ──────────────
+    # Une variable constante dans le temps mais différente d'une aire à l'autre
+    # passe le filtre de sélection, car elle varie globalement. Elle n'explique
+    # pourtant aucune dynamique — ni pic, ni saison — et agit seulement comme
+    # décalage de niveau entre aires.
+    _dyn_r = res_r.get("feature_dynamics")
+    _clim_inv_r = res_r.get("climat_invariant") or []
+    if _dyn_r is not None and len(_dyn_r):
+        _n_temp_r = int((_dyn_r["role"] == "temporelle").sum())
+        _n_niv_r = int((_dyn_r["role"] == "niveau par aire").sum())
+        st.caption(
+            f"🧭 Variabilité : **{_n_temp_r}** variable(s) varient dans le temps au "
+            f"sein des aires, **{_n_niv_r}** sont des niveaux par aire (couverture "
+            f"vaccinale, urbanisation, population…) — utiles pour situer le risque, "
+            f"incapables d'expliquer une dynamique.")
+    if _clim_inv_r:
+        st.warning(
+            f"⚠️ **Climat invariant dans le temps** : {', '.join(_clim_inv_r)}. Ces "
+            f"variables sont retenues par le modèle parce qu'elles diffèrent entre "
+            f"aires, mais elles ne varient pas au fil des semaines : elles ne peuvent "
+            f"expliquer ni pic ni saison. Pour que le climat apporte de l'information "
+            f"prédictive, il faut des précipitations, températures et humidités "
+            f"**hebdomadaires** (NASA POWER, ERA5), pas des moyennes par aire.")
     st.info(
         "ℹ️ L'ancien « R² test » provenait d'un `train_test_split` **aléatoire** : des "
         "semaines futures se retrouvaient dans l'entraînement, ce qui surestimait "

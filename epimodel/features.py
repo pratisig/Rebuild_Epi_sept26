@@ -575,3 +575,101 @@ def build_design_matrix(panel: pd.DataFrame,
             if c not in df.columns:
                 df[c] = np.nan
     return df, feature_cols
+
+
+# ======================================================================
+# 9. Diagnostic de variabilité temporelle (action F5)
+# ======================================================================
+def describe_feature_dynamics(df: pd.DataFrame,
+                              feature_cols: Optional[Sequence[str]] = None,
+                              area_col: str = COL_AREA) -> pd.DataFrame:
+    """
+    Classe chaque variable selon sa variabilité **à l'intérieur de chaque aire**.
+
+    Pourquoi ce diagnostic est nécessaire : :func:`select_features` écarte les
+    colonnes *globalement* constantes, mais une variable constante dans le temps
+    et différente d'une aire à l'autre — le cas d'un climat réduit à une moyenne
+    par aire — passe ce filtre. Elle est alors créditée comme pilote temporel
+    alors qu'elle n'agit que comme décalage de niveau entre aires : elle ne peut
+    expliquer aucune dynamique, aucun pic, aucune saison.
+
+    Ces variables ne doivent **pas** être supprimées pour autant. L'altitude en
+    est exactement un exemple, et elle est épidémiologiquement légitime : elle
+    module le niveau de risque. Le diagnostic distingue donc deux rôles, sans
+    rien retirer :
+
+    * ``temporelle``            — varie dans le temps au sein des aires ;
+    * ``niveau par aire``       — invariante dans le temps, varie entre aires ;
+    * ``constante``             — ne varie nulle part (apport nul) ;
+    * ``insuffisante``          — trop de valeurs manquantes pour conclure.
+
+    Retourne un cadre avec, par variable : le groupe, le nombre de valeurs
+    distinctes au sein d'une même aire, l'écart-type intra-aire moyen, l'écart-
+    type global, et le rôle retenu.
+    """
+    if feature_cols is None:
+        feature_cols = [c for grp in FEATURE_GROUPS.values() for c in grp
+                        if c in df.columns]
+
+    col_groupe = {c: g for g, cols in FEATURE_GROUPS.items() for c in cols}
+    lignes = []
+    for col in feature_cols:
+        if col not in df.columns:
+            continue
+        s = pd.to_numeric(df[col], errors="coerce")
+        if s.notna().sum() < 2:
+            lignes.append({"variable": col, "groupe": col_groupe.get(col, ""),
+                           "n_distinct_intra_aire": 0,
+                           "std_intra_aire": np.nan,
+                           "std_global": np.nan, "role": "insuffisante"})
+            continue
+
+        if area_col in df.columns:
+            grp = s.groupby(df[area_col], sort=False)
+            n_distinct = grp.nunique(dropna=True)
+            std_intra = grp.std(ddof=0)
+            n_distinct_max = int(n_distinct.max()) if len(n_distinct) else 0
+            std_intra_moy = float(std_intra.mean()) if len(std_intra) else np.nan
+        else:
+            n_distinct_max = int(s.nunique(dropna=True))
+            std_intra_moy = float(s.std(ddof=0) or 0.0)
+
+        std_global = float(s.std(ddof=0) or 0.0)
+
+        if n_distinct_max <= 1:
+            role = "constante" if std_global == 0.0 else "niveau par aire"
+        else:
+            role = "temporelle"
+
+        lignes.append({"variable": col, "groupe": col_groupe.get(col, ""),
+                       "n_distinct_intra_aire": n_distinct_max,
+                       "std_intra_aire": std_intra_moy,
+                       "std_global": std_global, "role": role})
+
+    return pd.DataFrame(lignes, columns=["variable", "groupe",
+                                         "n_distinct_intra_aire",
+                                         "std_intra_aire", "std_global", "role"])
+
+
+def invariant_climate_variables(df: pd.DataFrame,
+                                feature_cols: Optional[Sequence[str]] = None,
+                                area_col: str = COL_AREA) -> List[str]:
+    """
+    Liste les variables du groupe climatique invariantes dans le temps.
+
+    C'est le signal concret de l'action F5 : si des variables climatiques sont
+    retenues par le modèle alors qu'elles ne varient pas au sein des aires, le
+    climat n'apporte aucune information sur la dynamique — il faut des
+    précipitations, températures et humidités **hebdomadaires**, pas des
+    moyennes par aire.
+    """
+    diag = describe_feature_dynamics(df, feature_cols=feature_cols,
+                                     area_col=area_col)
+    if diag.empty:
+        return []
+    # Seules les variables réellement mesurées mais figées dans le temps sont
+    # concernées. Une colonne entièrement vide (« insuffisante ») n'est pas
+    # invariante : elle est absente, et la signaler ici serait un faux diagnostic.
+    invariantes = ("niveau par aire", "constante")
+    sel = diag[diag["groupe"].eq("climate") & diag["role"].isin(invariantes)]
+    return sel["variable"].tolist()

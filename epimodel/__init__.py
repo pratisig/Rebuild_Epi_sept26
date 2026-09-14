@@ -30,6 +30,8 @@ from .features import (  # noqa: F401
     add_static_features,
     add_temporal_features,
     build_design_matrix,
+    describe_feature_dynamics,
+    invariant_climate_variables,
     select_features,
 )
 from .models import (  # noqa: F401
@@ -59,6 +61,7 @@ __all__ = [
     "add_temporal_features", "add_seasonality", "add_static_features",
     "add_population_features", "add_spatial_features", "add_climate_features",
     "build_design_matrix", "select_features",
+    "describe_feature_dynamics", "invariant_climate_variables",
     "MODEL_REGISTRY", "available_models", "make_model", "describe_model",
     "has_xgboost", "has_lightgbm",
     "temporal_cv_splits", "backtest", "metrics_summary", "naive_baselines",

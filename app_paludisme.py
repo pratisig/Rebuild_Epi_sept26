@@ -2741,6 +2741,33 @@ with tab3:
                 col7.metric("📚 Lignes entraînement", f"{metrics['n_train']:,}")
                 col8.metric("🤖 Algorithme", metrics['algorithme'])
 
+                # ── Diagnostic de variabilité temporelle (action F5) ────────
+                # Une variable constante dans le temps mais différente d'une aire
+                # à l'autre passe le filtre de sélection : elle varie globalement.
+                # Elle n'explique pourtant aucune dynamique — ni pic, ni saison —
+                # et agit seulement comme décalage de niveau entre aires. Le dire
+                # explicitement évite de croire que le climat pilote la prévision.
+                _dyn = mr.get('feature_dynamics')
+                _clim_inv = mr.get('climat_invariant') or []
+                if _dyn is not None and len(_dyn):
+                    _n_temp = int((_dyn['role'] == 'temporelle').sum())
+                    _n_niv = int((_dyn['role'] == 'niveau par aire').sum())
+                    st.caption(
+                        f"🧭 Variabilité : **{_n_temp}** variable(s) varient dans le temps "
+                        f"au sein des aires, **{_n_niv}** sont des niveaux par aire "
+                        f"(altitude, population…) — utiles pour situer le risque, "
+                        f"incapables d'expliquer une dynamique.")
+                if _clim_inv:
+                    st.warning(
+                        f"⚠️ **Climat invariant dans le temps** : "
+                        f"{', '.join(_clim_inv)}. Ces variables sont retenues par le "
+                        f"modèle parce qu'elles diffèrent entre aires, mais elles ne "
+                        f"varient pas au fil des semaines : elles ne peuvent expliquer "
+                        f"ni pic ni saison. Pour que le climat apporte de l'information "
+                        f"prédictive, il faut des précipitations, températures et "
+                        f"humidités **hebdomadaires** (NASA POWER, ERA5), pas des "
+                        f"moyennes par aire.")
+
                 # ── Interprétation fondée sur la validation temporelle ───────
                 cv_r2 = metrics['cv_r2_mean']
                 if np.isnan(cv_r2):
