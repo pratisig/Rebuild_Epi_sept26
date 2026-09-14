@@ -1,27 +1,46 @@
-streamlit
-pandas
-numpy
-geopandas
-scikit-learn
-earthengine-api
-geemap
-folium
-streamlit-folium
-plotly
-openpyxl
-branca
-rasterio
-matplotlib
-seaborn
-scipy
-Pillow
-requests
-shapely
-statsmodels
-streamlit-authenticator
-pyyaml
-kaleido
-weasyprint
-python-docx
-reportlab
-fpdf2
+# ── Interface ──────────────────────────────────────────────────────────
+streamlit>=1.36
+streamlit-authenticator>=0.3
+folium>=0.15
+streamlit-folium>=0.18
+branca>=0.7
+kaleido>=0.2
+
+# ── Traitement des données ─────────────────────────────────────────────
+# Versions vérifiées dans l'environnement d'audit (voir section 9.2 du rapport).
+pandas>=2.2
+numpy>=1.26
+scipy>=1.13
+openpyxl>=3.1
+jinja2>=3.1            # requis par DataFrame.style (exports Excel de l'onglet 3)
+
+# ── Géospatial ─────────────────────────────────────────────────────────
+geopandas>=1.0
+shapely>=2.0
+pyogrio>=0.9
+rasterio>=1.3
+earthengine-api>=1.0
+geemap>=0.30
+
+# ── Modélisation ───────────────────────────────────────────────────────
+scikit-learn>=1.4
+xgboost>=2.0           # ajouté par l'audit : gradient boosting + objectif Poisson
+lightgbm>=4.3          # ajouté par l'audit : alternative rapide sur gros panneaux
+statsmodels>=0.14
+
+# ── Visualisation et rapports ──────────────────────────────────────────
+plotly>=5.20
+matplotlib>=3.8
+seaborn>=0.13
+python-docx>=1.1
+reportlab>=4.0
+fpdf2>=2.7
+weasyprint>=61
+
+# ── Divers ─────────────────────────────────────────────────────────────
+Pillow>=10.2
+pyyaml>=6.0
+requests>=2.31
+
+# ── Qualité (développement) ────────────────────────────────────────────
+pytest>=8.0

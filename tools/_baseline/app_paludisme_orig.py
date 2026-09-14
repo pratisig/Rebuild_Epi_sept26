@@ -17,10 +17,6 @@ from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 from prediction_map_tab import create_prediction_map_tab
 from validation_tab import create_validation_tab
-import epimodel as em
-import epi_app_bridge
-from epimodel.static_covariates import (STATIC_COLUMNS as GEE_STATIC_COLUMNS,
-                                        describe_coverage as static_coverage)
 import rasterio
 from rasterio.mask import mask
 import matplotlib.pyplot as plt
@@ -111,8 +107,7 @@ st.markdown("""
 # ============================================================
 for key in ["gdf_health", "df_cases", "temp_raster", "flood_raster", "rivers_gdf",
             "precipitation_raster", "humidity_raster", "elevation_raster", "model_results",
-            "df_climate_aggregated", "enrichi_bfa", "enrichi_mli", "enrichi_ner", "enrichi_mrt",
-            "enrichi_upload", "df_gee_static", "df_env_static"]:
+            "df_climate_aggregated", "enrichi_bfa", "enrichi_mli", "enrichi_ner", "enrichi_mrt", "enrichi_upload"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -1570,77 +1565,6 @@ with st.sidebar.expander("🌍 Données Environnementales", expanded=False):
         st.success(f"✅ {len(rivers_gdf)} cours d'eau")
 
 # ============================================================
-# COVARiableS STATIQUES (altitude, pente, NDVI, eau, urbain…)
-# ============================================================
-with st.sidebar.expander("⛰️ Covariables statiques", expanded=False):
-    st.markdown(
-        """
-        Variables **non dynamiques** par aire de santé. Elles expliquent les
-        différences structurelles de transmission (l'altitude conditionne la
-        présence d'*Anopheles*, la pente le drainage des gîtes larvaires).
-        """
-    )
-
-    if st.session_state.get("df_gee_static") is not None:
-        _st = st.session_state["df_gee_static"]
-        st.success(f"✅ {len(_st)} aires · {len([c for c in _st.columns if c != 'health_area'])} variables (GEE)")
-        st.dataframe(static_coverage(_st), hide_index=True)
-        if st.button("🔄 Réinitialiser les covariables GEE", key="reset_gee_static"):
-            st.session_state["df_gee_static"] = None
-            st.rerun()
-    else:
-        st.info("ℹ️ Aucune covariable GEE chargée")
-
-    if st.button("🛰️ Extraire depuis Google Earth Engine", key="extract_gee_static",
-                 help="SRTM (altitude, pente), MODIS (NDVI, LST), JRC (eau), ESA WorldCover"):
-        if st.session_state.gdf_health is None:
-            st.error("❌ Chargez d'abord les aires de santé.")
-        elif not gee_ok:
-            st.error("❌ Google Earth Engine non initialisé.")
-        else:
-            with st.spinner("🛰️ Extraction des covariables statiques…"):
-                from epimodel.static_covariates import extract_static_covariates_gee
-                try:
-                    _bar = st.progress(0.0)
-                    _txt = st.empty()
-
-                    def _cb(msg, frac, _b=_bar, _t=_txt):
-                        _t.text(msg)
-                        _b.progress(max(0.0, min(1.0, float(frac))))
-
-                    st.session_state["df_gee_static"] = extract_static_covariates_gee(
-                        st.session_state.gdf_health, area_col="health_area",
-                        progress=_cb)
-                    _bar.empty()
-                    _txt.empty()
-                    st.success("✅ Covariables statiques extraites")
-                except Exception as _e:
-                    st.error(f"❌ Extraction GEE : {_e}")
-
-    _up_static = st.file_uploader(
-        "📄 …ou charger un CSV de covariables statiques",
-        type=["csv"], key="upload_static",
-        help="Colonnes attendues : health_area + " + ", ".join(GEE_STATIC_COLUMNS[:6]) + " …")
-    if _up_static is not None:
-        try:
-            _dfst = pd.read_csv(_up_static)
-            _dfst.columns = _dfst.columns.str.strip()
-            if "health_area" not in _dfst.columns:
-                for _c in ["health_area", "health_are", "aire_sante", "Aire_Sante", "name_fr"]:
-                    if _c in _dfst.columns:
-                        _dfst = _dfst.rename(columns={_c: "health_area"})
-                        break
-            if "health_area" in _dfst.columns:
-                _dfst["health_area"] = _dfst["health_area"].astype(str).str.strip().str.lower()
-                st.session_state["df_env_static"] = _dfst
-                st.success(f"✅ {len(_dfst)} aires · {len(_dfst.columns) - 1} variables chargées")
-                st.dataframe(static_coverage(_dfst), hide_index=True)
-            else:
-                st.error("❌ Colonne 'health_area' introuvable dans le CSV")
-        except Exception as _e:
-            st.error(f"❌ Lecture du CSV : {_e}")
-
-# ============================================================
 # FILTRES
 # ============================================================
 st.sidebar.header("🔍 Filtres")
@@ -2443,49 +2367,24 @@ with tab3:
             subcol1, subcol2 = st.columns(2)
             
             with subcol1:
-                _dispo = em.available_models()
-                _labels = {m: em.MODEL_REGISTRY[m]["label"] for m in _dispo}
                 model_choice = st.selectbox(
                     "🤖 Algorithme",
-                    _dispo,
-                    index=_dispo.index("XGBoost") if "XGBoost" in _dispo else 0,
-                    format_func=lambda m: _labels.get(m, m),
-                    key="palu_algo"
+                    ["RandomForest", "GradientBoosting", "ExtraTrees"],
+                    help="**RandomForest** : Équilibré (recommandé)\n**GradientBoosting** : Plus précis\n**ExtraTrees** : Rapide"
                 )
-                st.caption(em.describe_model(model_choice))
-
-                objective_label = st.selectbox(
-                    "🎯 Objectif de perte",
-                    ["Poisson (comptages — recommandé)", "Erreur quadratique (historique)"],
-                    help="Les cas sont des **comptages** : leur variance croît avec la "
-                         "moyenne. L'objectif Poisson est donc mieux spécifié. Les "
-                         "algorithmes qui ne le gèrent pas basculent automatiquement "
-                         "sur une cible log1p."
-                )
-                objective = ("poisson" if objective_label.startswith("Poisson")
-                             else "squared_error")
-
-                with st.expander("ℹ️ Pourquoi XGBoost par défaut ?"):
-                    st.markdown(
-                        "- **XGBoost** : boosting régularisé (`hist`), gère les valeurs "
-                        "manquantes, supporte Poisson et les quantiles ;\n"
-                        "- **LightGBM** : équivalent, plus rapide sur beaucoup d'aires ;\n"
-                        "- **RandomForest / GradientBoosting / ExtraTrees** : conservés "
-                        "pour la comparabilité avec les analyses antérieures."
-                    )
-
+            
             with subcol2:
                 n_future_weeks = st.slider(
-                    "📅 Semaines à prévoir",
+                    "📅 Semaines à prévoir", 
                     1, 12, 4,
                     help="1-4 semaines : fiable | 5-12 semaines : indicatif"
                 )
-
+                
                 # ── Détecter et afficher la dernière semaine de la série ──────
                 df_mod_preview = df_cases.copy()
                 if years_selected and "year" in df_mod_preview.columns:
                     df_mod_preview = df_mod_preview[df_mod_preview["year"].isin(years_selected)]
-
+                
                 if "period" in df_mod_preview.columns:
                     last_period  = df_mod_preview["period"].max()
                     first_period = df_mod_preview["period"].min()
@@ -2494,78 +2393,56 @@ with tab3:
                         f"📌 **Série sélectionnée** : `{first_period}` → `{last_period}`  \n"
                         f"📊 **{nb_total_sem} semaines** · Les prédictions démarrent après `{last_period}`"
                     )
-
+            
             # Mode
             mode = st.radio(
                 "🎚️ Mode",
                 ["🟢 Simple", "🔵 Expert"],
                 horizontal=True,
-                help="Simple : configuration recommandée | Expert : contrôle total"
+                help="Simple : Optimisé auto | Expert : Contrôle total"
             )
-            alert_threshold = st.slider("🚨 Seuil alerte (%)", 50, 95, 75,
+            # Avec les autres sliders
+            alert_threshold = st.slider("🚨 Seuil alerte (%)", 50, 95, 75, 
                                         help="Top X% des prédictions considérées à risque")
         with col_conf2:
             st.markdown("#### 📊 État")
             st.info(f"""
-            **Algo** : {model_choice}
-            **Horizon** : {n_future_weeks}W
+            **Algo** : {model_choice}  
+            **Horizon** : {n_future_weeks}W  
             **Mode** : {mode.split()[1]}
             """)
-
+            
+            # Score qualité
             nb_weeks = df_cases['week_'].nunique()
             has_climate = st.session_state.df_climate_aggregated is not None
-            has_static = (st.session_state.get("df_gee_static") is not None
-                          or st.session_state.get("df_env_static") is not None)
-            quality = min(100, nb_weeks * 1.5 + (40 if has_climate else 0)
-                          + (20 if has_static else 0))
+            quality = min(100, nb_weeks*1.5 + (40 if has_climate else 0))
+            
             st.metric("🎯 Qualité Données", f"{quality:.0f}/100")
-            if not has_static:
-                st.caption("⛰️ +20 pts si des covariables statiques (altitude…) sont chargées")
-
+        
         # Paramètres avancés (mode expert)
         if "Expert" in mode:
-            with st.expander("🔧 Paramètres avancés"):
+            with st.expander("🔧 Paramètres Avancés"):
                 col1, col2 = st.columns(2)
-
+                
                 with col1:
-                    st.markdown("**Validation temporelle**")
-                    n_cv_splits = st.slider("Nombre de folds", 2, 8, 5,
-                                            help="Découpage bloqué par semaine")
-                    embargo = st.slider("Embargo (semaines)", 0, 13, 4,
-                                        help="Semaines retirées entre entraînement et test "
-                                             "pour neutraliser les retards")
-
+                    use_pca = st.checkbox("📐 ACP", True, help="Réduction dimensionnalité")
+                    if use_pca:
+                        variance_threshold = st.slider("% Variance", 80, 99, 95) / 100
+                
                 with col2:
-                    st.markdown("**Variables**")
-                    use_spatial = st.checkbox("🗺️ Lag spatial + clusters", True)
+                    use_spatial = st.checkbox("🗺️ Spatial", True, help="Clustering + lag")
                     if use_spatial:
                         c1, c2 = st.columns(2)
                         with c1:
                             n_clusters = st.slider("Clusters", 3, 10, 5)
                         with c2:
                             k_neighbors = st.slider("Voisins", 3, 10, 5)
-                    else:
-                        n_clusters, k_neighbors = 5, 5
-                    use_climate = st.checkbox("🌦️ Variables climatiques", True)
-                    with_backtest = st.checkbox(
-                        "🧪 Backtest multi-horizons (plus lent)", False,
-                        help="Ré-entraîne le modèle sur plusieurs dates de coupure et "
-                             "compare aux baselines naïves.")
-
-                st.info(
-                    "ℹ️ L'**ACP n'est plus appliquée** : elle était ajustée sur "
-                    "l'ensemble des données (fuite), mélangeait retards et variables "
-                    "statiques, et rendait l'importance des variables illisible. Les "
-                    "algorithmes de type arbres n'ont pas besoin de réduction de "
-                    "dimension."
-                )
         else:
-            n_cv_splits, embargo = 5, 4
+            use_pca, variance_threshold = True, 0.95
             use_spatial, n_clusters, k_neighbors = True, 5, 5
-            use_climate, with_backtest = True, False
-
+        
         st.markdown("---")
-
+        
         # ========================================
         # BOUTON LANCEMENT
         # ========================================
@@ -2573,50 +2450,381 @@ with tab3:
             with st.spinner("⏳ Traitement en cours..."):
                 progress_bar = st.progress(0)
                 status = st.empty()
-
-                def _progress(msg, pct, _b=progress_bar, _s=status):
-                    _s.text(msg)
-                    _b.progress(int(max(0, min(100, pct))))
-
+                
                 try:
-                    status.text("📊 Préparation du panneau…")
-                    _static_tbl = epi_app_bridge.build_static_table(
-                        st.session_state.get("dfpopulation"),
-                        st.session_state.get("df_gee_static"),
-                        st.session_state.get("df_env_static"),
-                    )
-                    panel, design_builder, prep_info = epi_app_bridge.prepare_palu(
-                        df_cases=df_cases,
-                        gdf_health=gdf_health,
-                        dfpopulation=st.session_state.get("dfpopulation"),
-                        df_gee_static=st.session_state.get("df_gee_static"),
-                        df_env=st.session_state.get("df_env_static"),
-                        df_climate=st.session_state.df_climate_aggregated,
-                        years=years_selected if years_selected else None,
-                        use_spatial=use_spatial,
-                        neighbour_k=k_neighbors,
-                        n_clusters=n_clusters,
-                        use_climate=use_climate,
-                    )
+                    # ÉTAPE 1 : Données de base (0-20%)
+                    status.text("📊 1/6 : Préparation données...")
+                    df_mod_src = df_cases.copy()
+                    if years_selected and "year" in df_mod_src.columns:
+                        df_mod_src = df_mod_src[df_mod_src["year"].isin(years_selected)]
+                    df_model = df_mod_src.groupby(["health_area", "week_"], as_index=False).agg({"cases": "sum"})
+                    df_model["week_num"] = pd.factorize(df_model["week_"])[0]
                     progress_bar.progress(10)
-                    st.session_state["palu_panel_info"] = prep_info
+                    
+                    # Intégration climat
+                    climate_features = []
+                    if st.session_state.df_climate_aggregated is not None:
+                        df_climate = st.session_state.df_climate_aggregated
+                        df_model = df_model.merge(
+                            df_climate[['health_area', 'week_', 'temp_api', 'precip_api', 'humidity_api']],
+                            on=['health_area', 'week_'], how='left'
+                        )
+                        climate_features = [c for c in ['temp_api', 'precip_api', 'humidity_api'] 
+                                          if c in df_model.columns and df_model[c].notna().sum() > 0]
+                    progress_bar.progress(20)
+                    
+                    # ÉTAPE 2 : Features temporelles (20-40%)
+                    status.text("⏰ 2/6 : Features temporelles...")
+                    df_model = create_advanced_features(df_model)
+                    progress_bar.progress(40)
 
-                    status.text("🤖 Modélisation…")
-                    model_results = epi_app_bridge.run_modelling_palu(
-                        panel=panel,
-                        design_builder=design_builder,
-                        algo=model_choice,
-                        n_future_weeks=n_future_weeks,
-                        objective=objective,
-                        n_splits=n_cv_splits,
-                        embargo=embargo,
-                        with_backtest=with_backtest,
-                        progress=_progress,
-                    )
-                    st.session_state.model_results = model_results
+                    # 🎯 Features population (après features temporelles)
+                    df_model = create_population_features(df_model)
+
+                    # ÉTAPE 3 : Environnement (40-50%)
+                    status.text("🌍 3/6 : Données environnementales...")
+                    gdf_env = gdf_health.copy()
+                    static_env_cols = []
+                    
+                    if st.session_state.flood_raster:
+                        gdf_env["flood_mean"] = extract_raster_statistics(gdf_env, st.session_state.flood_raster, 'mean')
+                        static_env_cols.append("flood_mean")
+                    
+                    if st.session_state.elevation_raster:
+                        gdf_env["elevation_mean"] = extract_raster_statistics(gdf_env, st.session_state.elevation_raster, 'mean')
+                        static_env_cols.append("elevation_mean")
+                    
+                    if st.session_state.rivers_gdf is not None and not st.session_state.rivers_gdf.empty:
+                        gdf_env["dist_river"] = gdf_env.centroid.apply(
+                            lambda x: distance_to_nearest_line(x, st.session_state.rivers_gdf)
+                        )
+                        static_env_cols.append("dist_river")
+                    
+                    gdf_env = create_environmental_features(gdf_env)
+                    if 'flood_risk' in gdf_env.columns:
+                        static_env_cols.append('flood_risk')
+                    # Intégration population dans gdf_env
+                    if 'dfpopulation' in st.session_state and st.session_state.dfpopulation is not None and not st.session_state.dfpopulation.empty:  # ✅
+
+                        gdf_env = gdf_env.merge(
+                           st.session_state.dfpopulation[["health_area", "Pop_Totale", "Pop_Enfants_0_14", "Densite_Pop"]],
+                            on="health_area",
+                            how="left"
+                        )
+                        static_env_cols.extend(
+                            [c for c in ["Pop_Totale", "Pop_Enfants_0_14", "Densite_Pop"] if c in gdf_env.columns]
+                        )
+
+                    static_env_cols = [c for c in static_env_cols if c in gdf_env.columns]
+                    if static_env_cols:
+                        df_model = df_model.merge(gdf_env[['health_area'] + static_env_cols], on="health_area", how="left")
+                    progress_bar.progress(50)
+                    
+                    # ÉTAPE 4 : Spatial (50-60%)
+                    if use_spatial:
+                        status.text("🗺️ 4/6 : Analyse spatiale...")
+                        clusters, _ = create_spatial_clusters(gdf_env, n_clusters)
+                        gdf_env['spatial_cluster'] = clusters
+                        df_model = df_model.merge(gdf_env[['health_area', 'spatial_cluster']], on='health_area', how='left')
+                        
+                        cluster_dummies = pd.get_dummies(df_model['spatial_cluster'], prefix='cluster')
+                        df_model = pd.concat([df_model, cluster_dummies], axis=1)
+                        
+                        # Lag spatial robuste aux aires manquantes
+                        spatial_lag_values = []
+                        all_geo_areas = set(gdf_env['health_area'])
+                        
+                        for week in df_model['week_num'].unique():
+                          df_week = (df_model[df_model['week_num'] == week]
+                                     .sort_values('health_area')
+                                     .reset_index(drop=True))
+                          cases_week   = df_week['cases'].reset_index(drop=True)
+                          common_areas = df_week['health_area'].tolist()
+                        
+                          # Sous‑ensemble pour lequel on a vraiment une géométrie
+                          common_areas_ok = [a for a in common_areas if a in all_geo_areas]
+                        
+                          # Si aucune aire de cette semaine n’existe dans le shapefile → tout à 0
+                          if not common_areas_ok:
+                              spatial_lag_values.extend([0.0] * len(df_week))
+                              continue
+                        
+                          gdf_week = gdf_env[gdf_env['health_area'].isin(common_areas_ok)].copy()
+                        
+                          # Forcer le même ordre que df_week sur les aires valides
+                          gdf_aligned = (
+                              gdf_week.set_index('health_area')
+                                      .loc[common_areas_ok]
+                                      .reset_index()
+                          )
+                        
+                          # Cas “propre” : même longueur → comme avant
+                          if len(gdf_aligned) == len(cases_week):
+                              lag_values = calculate_spatial_lag(gdf_aligned, cases_week, k_neighbors)
+                              spatial_lag_values.extend(lag_values.tolist())
+                              continue
+                        
+                          # Cas où certaines aires du CSV n’ont pas de géométrie :
+                          # on calcule le lag uniquement pour les aires valides puis on remplit 0 pour les autres.
+                          cases_sub = (
+                              df_week[df_week['health_area'].isin(common_areas_ok)]['cases']
+                              .reset_index(drop=True)
+                          )
+                          if len(cases_sub) != len(gdf_aligned):
+                              # Sécurité : si toujours incohérent → tout à 0 pour cette semaine
+                              spatial_lag_values.extend([0.0] * len(df_week))
+                              continue
+                        
+                          lag_sub = calculate_spatial_lag(gdf_aligned, cases_sub, k_neighbors)
+                        
+                          # Réinjection dans l’ordre original (0 pour les aires sans géométrie)
+                          idx_sub = 0
+                          for ha in df_week['health_area']:
+                              if ha in common_areas_ok:
+                                  spatial_lag_values.append(float(lag_sub[idx_sub]))
+                                  idx_sub += 1
+                              else:
+                                  spatial_lag_values.append(0.0)
+                        
+                        df_model['spatial_lag'] = spatial_lag_values
+                    progress_bar.progress(60)
+                    
+                    # 🧮 Coefficient d'ajustement population par aire
+                    if "Pop_Totale" in df_model.columns and df_model["Pop_Totale"].notna().any():
+                        mean_cases_by_area = df_model.groupby("health_area")["cases"].mean()
+                        pop_by_area = df_model.groupby("health_area")["Pop_Totale"].first()
+                    
+                        incidence_by_area = (mean_cases_by_area / pop_by_area * 10000)
+                        incidence_by_area = incidence_by_area.replace([np.inf, -np.inf], np.nan).fillna(0)
+                    
+                        if pop_by_area.sum() > 0:
+                            global_incidence = mean_cases_by_area.sum() / pop_by_area.sum() * 10000
+                            coef_ajustement = (incidence_by_area / global_incidence)
+                            coef_ajustement = coef_ajustement.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+                            coef_ajustement = coef_ajustement.clip(0.5, 2.0)
+                        else:
+                            coef_ajustement = pd.Series(1.0, index=incidence_by_area.index)
+                    
+                        df_model["coef_population"] = df_model["health_area"].map(coef_ajustement).fillna(1.0)
+                    else:
+                        df_model["coef_population"] = 1.0
+
+                    # ÉTAPE 5 : Sélection features (60-70%)
+                    status.text("🔧 5/6 : Sélection features...")
+                    feature_cols = ['week_num']
+                    feature_cols.extend([c for c in df_model.columns if 'sin_' in c or 'cos_' in c])
+                    temporal = [c for c in df_model.columns if any(x in c for x in ['lag', 'ma_', 'std_', 'growth'])]
+                    feature_cols.extend([c for c in temporal if df_model[c].dtype in ['int64', 'float64']])
+                    feature_cols.extend(climate_features)
+                    feature_cols.extend(static_env_cols)
+                    
+                    # ✅ CORRECTION : Ajouter spatial AVANT ACP, pas après
+                    if use_spatial:
+                        if 'spatial_lag' in df_model.columns:
+                            feature_cols.append('spatial_lag')
+                        feature_cols.extend([c for c in df_model.columns if c.startswith('cluster_')])
+                    
+                    # 🧮 Features population
+                    pop_features = [
+                        "Pop_Totale",
+                        "Pop_Enfants_0_14",
+                        "Densite_Pop",
+                        "incidence_rate",
+                        "child_risk",
+                        "demo_pressure",
+                        "coef_population",
+                    ]
+                    pop_features = [c for c in pop_features if c in df_model.columns]
+                    feature_cols.extend(pop_features)
+                    
+                    # Nettoyage final
+                    feature_cols = list(set([c for c in feature_cols if c in df_model.columns]))
+                    
+                    X = df_model[feature_cols].copy().replace([np.inf, -np.inf], np.nan)
+                    y = df_model["cases"].copy()
+                    
+                    # ACP
+                    pca_info = None
+                    if use_pca and len(feature_cols) > 10:
+                        df_pca, pca_model, pca_scaler, pca_imputer, pca_info = perform_pca_analysis(
+                            df_model, feature_cols, variance_threshold
+                        )
+                        X = df_pca
+                        feature_cols = df_pca.columns.tolist()  # ✅ Mettre à jour feature_cols après ACP
+                    progress_bar.progress(70)
+                    
+                    # ÉTAPE 6 : Entraînement (70-100%)
+                    status.text("🎯 6/6 : Entraînement...")
+                    from sklearn.ensemble import ExtraTreesRegressor
+                    from sklearn.preprocessing import RobustScaler
+                    
+                    if model_choice == "GradientBoosting":
+                        if use_pca:
+                            model = GradientBoostingRegressor(n_estimators=300, learning_rate=0.05, max_depth=5, random_state=42)
+                        else:
+                            model = Pipeline([
+                                ("imputer", SimpleImputer(strategy="mean")),
+                                ("scaler", RobustScaler()),
+                                ("regressor", GradientBoostingRegressor(n_estimators=300, learning_rate=0.05, max_depth=5, random_state=42))
+                            ])
+                    elif model_choice == "ExtraTrees":
+                        if use_pca:
+                            model = ExtraTreesRegressor(n_estimators=300, max_depth=None, min_samples_split=5, random_state=42, n_jobs=-1)
+                        else:
+                            model = Pipeline([
+                                ("imputer", SimpleImputer(strategy="mean")),
+                                ("regressor", ExtraTreesRegressor(n_estimators=300, max_depth=None, min_samples_split=5, random_state=42, n_jobs=-1))
+                            ])
+                    else:  # RandomForest
+                        if use_pca:
+                            model = RandomForestRegressor(n_estimators=300, max_depth=None, min_samples_split=5, random_state=42, n_jobs=-1)
+                        else:
+                            model = Pipeline([
+                                ("imputer", SimpleImputer(strategy="mean")),
+                                ("regressor", RandomForestRegressor(n_estimators=300, max_depth=None, min_samples_split=5, random_state=42, n_jobs=-1))
+                            ])
+                    
+                    progress_bar.progress(75)
+                    
+                    # Validation croisée
+                    tscv = TimeSeriesSplit(n_splits=5)
+                    cv_scores = cross_val_score(model, X, y, cv=tscv, scoring='r2', n_jobs=-1)
+                    cv_mae = -cross_val_score(model, X, y, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=-1)
+                    progress_bar.progress(85)
+                    
+                    # Entraînement final
+                    model.fit(X, y)
+                    df_model["predicted_cases"] = model.predict(X).clip(0).round().astype(int)
+                    mae = mean_absolute_error(y, df_model["predicted_cases"])
+                    rmse = np.sqrt(mean_squared_error(y, df_model["predicted_cases"]))
+                    from sklearn.metrics import r2_score
+                    r2 = r2_score(y, df_model["predicted_cases"])
+                    progress_bar.progress(90)
+                    
+                    # Prédictions futures
+                    status.text("🔮 Prédictions futures...")
+                    max_week = df_model["week_num"].max()
+                    future_rows = []
+                    
+                    for ha in df_model["health_area"].unique():
+                        df_ha = df_model[df_model["health_area"] == ha].sort_values("week_num")
+                        history = df_ha['cases'].tail(8).tolist()
+                        
+                        # Valeurs statiques
+                        static_vals = {
+                            col: df_ha.iloc[-1][col] 
+                            for col in static_env_cols + (['spatial_cluster'] if use_spatial else [])
+                            if col in df_ha.columns and not pd.isna(df_ha.iloc[-1][col])
+                        }
+                        
+                        # Valeurs climat
+                        climate_vals = {
+                            col: df_ha.iloc[-1][col] 
+                            for col in climate_features
+                            if col in df_ha.columns and not pd.isna(df_ha.iloc[-1][col])
+                        }
+                        
+                        for step in range(1, n_future_weeks + 1):
+                            future_week = max_week + step
+                            row = {"health_area": ha, "week_num": future_week}
+                            
+                            # ===== Saisonnalité =====
+                            week_of_year = future_week % 52
+                            row['sin_week'] = np.sin(2 * np.pi * week_of_year / 52)
+                            row['cos_week'] = np.cos(2 * np.pi * week_of_year / 52)
+                            
+                            # ===== Features temporelles =====
+                            if history:
+                                row['cases_lag_1'] = history[-1]
+                                if len(history) >= 2:
+                                    row['cases_lag_2'] = history[-2]
+                                    row['cases_ma_2'] = np.mean(history[-2:])
+                                    row['growth_rate'] = (history[-1] - history[-2]) / (history[-2] + 1)
+                                if len(history) >= 4:
+                                    row['cases_lag_4'] = history[-4]
+                                    row['cases_ma_4'] = np.mean(history[-4:])
+                            
+                            # ===== Features statiques =====
+                            row.update(static_vals)
+                            
+                            # ===== Features climatiques =====
+                            if climate_vals:
+                                seasonal_factor = 1 + 0.15 * row['sin_week']
+                                for var, val in climate_vals.items():
+                                    row[var] = val * seasonal_factor
+                            
+                            # ===== ✅ CORRECTION : Features spatiales AVANT complétion =====
+                            if use_spatial:
+                                # Spatial lag
+                                row['spatial_lag'] = history[-1] if history else 0
+                                
+                                # Cluster dummies
+                                if 'spatial_cluster' in static_vals:
+                                    for i in range(n_clusters):
+                                        row[f'cluster_{i}'] = 1 if static_vals['spatial_cluster'] == i else 0
+                            
+                            # ===== ✅ CORRECTION : Préparer input SELON mode ACP =====
+                            if use_pca and pca_info:
+                                # AVEC ACP : Utiliser feature_names ORIGINALES (avant ACP)
+                                feature_names_original = pca_info['feature_names']
+                                
+                                # Compléter features manquantes avec 0
+                                for col in feature_names_original:
+                                    if col not in row:
+                                        row[col] = 0
+                                
+                                # Transformer
+                                try:
+                                    row_df = pd.DataFrame([row])[feature_names_original]
+                                    row_imputed = pca_imputer.transform(row_df)
+                                    row_scaled = pca_scaler.transform(row_imputed)
+                                    row_pca = pca_model.transform(row_scaled)
+                                    X_step = pd.DataFrame(
+                                        row_pca, 
+                                        columns=[f'PC{i+1}' for i in range(pca_info['n_components'])]
+                                    )
+                                except KeyError as e:
+                                    missing_cols = [c for c in feature_names_original if c not in row]
+                                    st.error(f"❌ Colonnes manquantes pour ACP : {missing_cols}")
+                                    st.error(f"📋 Colonnes disponibles : {list(row.keys())}")
+                                    raise
+                            else:
+                                # SANS ACP : Utiliser feature_cols directement
+                                # Compléter features manquantes avec 0
+                                for col in feature_cols:
+                                    if col not in row:
+                                        row[col] = 0
+                                
+                                try:
+                                    X_step = pd.DataFrame([row])[feature_cols]
+                                except KeyError as e:
+                                    missing_cols = [c for c in feature_cols if c not in row]
+                                    st.error(f"❌ Colonnes manquantes : {missing_cols}")
+                                    st.error(f"📋 Colonnes disponibles : {list(row.keys())}")
+                                    raise
+                            
+                            # ===== Prédiction =====
+                            pred = max(0, round(model.predict(X_step)[0]))
+                            
+                            # Mise à jour historique
+                            history.append(pred)
+                            if len(history) > 8:
+                                history.pop(0)
+                            
+                            row['predicted_cases'] = pred
+                            future_rows.append(row)
+                    
+                    df_future = pd.DataFrame(future_rows)
                     progress_bar.progress(100)
                     status.text("✅ Terminé !")
-
+                    
+                    # Sauvegarder
+                    st.session_state.model_results = {
+                        'df_model': df_model, 'df_future': df_future,
+                        'metrics': {'mae': mae, 'rmse': rmse, 'r2': r2, 'cv_r2_mean': cv_scores.mean(), 'cv_r2_std': cv_scores.std()},
+                        'pca_info': pca_info, 'feature_cols': feature_cols
+                    }
+                    
                 except Exception as e:
                     st.error(f" Erreur : {str(e)}")
                     import traceback
@@ -2628,165 +2836,92 @@ with tab3:
             if st.session_state.model_results:
                 st.markdown("---")
                 st.markdown("## 📊 Résultats")
-
-                mr = st.session_state.model_results
-                metrics = mr['metrics']
-
+                
+                metrics = st.session_state.model_results['metrics']
                 col1, col2, col3, col4 = st.columns(4)
-                col1.metric("🎯 R² CV temporel", f"{metrics['cv_r2_mean']:.3f}",
-                            help="Découpage bloqué par semaine, avec embargo. "
-                                 "C'est LA métrique de généralisation.")
-                col2.metric("📉 MAE CV", f"{metrics['cv_mae_mean']:.1f} cas",
-                            help="Erreur absolue moyenne hors échantillon (1 semaine)")
-                _mean_obs = float((mr['df_model']['cases'].mean()
-                                   if 'cases' in mr['df_model'].columns else float('nan')))
-                _mae_pct = (metrics['cv_mae_mean'] / _mean_obs * 100
-                            if _mean_obs and _mean_obs > 0 else float('nan'))
-                col3.metric("📐 MAE / moyenne", f"{_mae_pct:.1f} %",
-                            help="Erreur relative à la moyenne observée : "
-                                 "seule comparaison valable entre zones de tailles différentes")
-                col4.metric("🧮 R² in-sample", f"{metrics['r2']:.3f}",
-                            help="⚠️ Mesuré sur les données d'entraînement : "
-                                 "toujours optimiste, à ne pas utiliser seul")
-
-                col5, col6, col7, col8 = st.columns(4)
-                col5.metric("σ R² CV", f"±{metrics['cv_r2_std']:.3f}")
-                col6.metric("🔢 Variables", metrics['n_features'])
-                col7.metric("📚 Lignes entraînement", f"{metrics['n_train']:,}")
-                col8.metric("🤖 Algorithme", metrics['algorithme'])
-
-                # ── Interprétation fondée sur la validation temporelle ───────
-                cv_r2 = metrics['cv_r2_mean']
-                if np.isnan(cv_r2):
-                    st.warning("⚠️ Validation temporelle impossible (historique trop court).")
-                elif cv_r2 >= 0.70 and _mae_pct <= 30:
-                    st.success(f"✅ **Bon** : R² CV = {cv_r2:.3f}, MAE = {_mae_pct:.1f} % de la "
-                               f"moyenne — utilisable pour l'alerte précoce.")
-                elif cv_r2 >= 0.45:
-                    st.info(f"🟡 **Moyen** : R² CV = {cv_r2:.3f}, MAE = {_mae_pct:.1f} % — "
-                            f"utilisable pour la planification logistique, pas pour le ciblage fin.")
+                col1.metric("📉 MAE", f"{metrics['mae']:.2f}")
+                col2.metric("📊 RMSE", f"{metrics['rmse']:.2f}")
+                col3.metric("🎯 r2", f"{metrics['r2']:.3f}")
+                col4.metric("✅ r2 CV", f"{metrics['cv_r2_mean']:.3f}")
+                
+                # Interprétation
+                r2, cv_r2 = metrics['r2'], metrics['cv_r2_mean']
+                if r2 > 0.85 and cv_r2> 0.80:
+                    st.success(f"✅ **Excellent** : r2={r2:.3f}, CV={cv_r2:.3f} - Fiable pour décisions stratégiques")
+                elif r2 > 0.70 and cv_r2> 0.65:
+                    st.info(f"🟡 **Bon** : r2={r2:.3f}, CV={cv_r2:.3f} - OK pour alertes précoces")
                 else:
-                    st.warning(f"⚠️ **Faible** : R² CV = {cv_r2:.3f}, MAE = {_mae_pct:.1f} % — "
-                               f"ajouter des covariables statiques / climatiques ou allonger l'historique.")
-
-                st.caption(
-                    "ℹ️ Le **R² in-sample** n'est affiché qu'à titre de comparaison : il est "
-                    "mesuré sur les données d'entraînement et surestime toujours la performance. "
-                    "Le R² CV temporel découpe **par semaine** (jamais par aire) avec un embargo "
-                    f"de {embargo} semaine(s) pour neutraliser les variables de retard."
-                )
-
-                # ── Détail des folds ────────────────────────────────────────
-                _folds = mr.get('cv_folds')
-                if _folds is not None and len(_folds):
-                    with st.expander("🧪 Détail de la validation temporelle par fold",
-                                     expanded=False):
-                        st.dataframe(
-                            _folds[['fold', 'train_weeks', 'test_weeks', 'n', 'mae',
-                                    'rmse', 'r2', 'bias', 'agg_ratio']]
-                            .rename(columns={
-                                'fold': 'Fold', 'train_weeks': 'Semaines entraînement',
-                                'test_weeks': 'Semaines test', 'n': 'Obs.',
-                                'mae': 'MAE', 'rmse': 'RMSE', 'r2': 'R²',
-                                'bias': 'Biais', 'agg_ratio': 'Total prédit/observé'}),
-                            hide_index=True, use_container_width=True)
-                        st.caption(
-                            "Aucune semaine de test n'apparaît à l'entraînement : "
-                            "chaque fold n'utilise que le passé.")
-
-                # ── Backtest multi-horizons ─────────────────────────────────
-                _bt = mr.get('backtest')
-                if _bt is not None and len(_bt):
-                    st.markdown("### 📈 Backtest multi-horizons vs baselines naïves")
-                    _cols = ['modele', 'type', 'horizon', 'mae_pool', 'rmse_pool',
-                             'r2_pool', 'smape_pool', 'agg_ratio_pool',
-                             'skill_mae_vs_baseline']
-                    st.dataframe(
-                        _bt[[c for c in _cols if c in _bt.columns]].rename(columns={
-                            'modele': 'Modèle', 'type': 'Type', 'horizon': 'Horizon (sem.)',
-                            'mae_pool': 'MAE', 'rmse_pool': 'RMSE', 'r2_pool': 'R²',
-                            'smape_pool': 'sMAPE %', 'agg_ratio_pool': 'Total prédit/observé',
-                            'skill_mae_vs_baseline': 'Gain vs meilleure baseline'}),
-                        hide_index=True, use_container_width=True)
-                    st.caption(
-                        "Le **gain vs baseline** mesure la réduction d'erreur par rapport à la "
-                        "meilleure référence naïve (persistance, saisonnier, moyenne de l'aire). "
-                        "Un modèle dont le gain est ≤ 0 n'apporte rien : c'est le contrôle "
-                        "indispensable d'un outil d'aide à la décision.")
-
-                # ── Importance des variables ────────────────────────────────
-                _imp = mr.get('importance')
-                if _imp is not None and len(_imp):
-                    st.markdown("### 🔍 Importance des variables")
-                    _fig_imp = px.bar(
-                        _imp.head(20).sort_values('importance'),
-                        x='importance_pct', y='variable', orientation='h',
-                        labels={'importance_pct': 'Importance (%)', 'variable': 'Variable'},
-                        color='importance_pct', color_continuous_scale='Blues')
-                    _fig_imp.update_layout(height=520, template='plotly_white')
-                    st.plotly_chart(_fig_imp, use_container_width=True)
-
-                # ── Prédictions ─────────────────────────────────────────────
+                    st.warning(f"⚠️ **Moyen** : r2={r2:.3f}, CV={cv_r2:.3f} - Activer climat / vérifier données")
+                
+                # Prédictions
                 st.markdown("### 🔮 Prédictions")
                 df_future = st.session_state.model_results['df_future']
-                _has_period = 'period' in df_future.columns
-                df_display = df_future[['health_area', 'predicted_cases']].copy()
-                df_display.insert(1, 'Semaine',
-                                  df_future['period'] if _has_period
-                                  else df_future['week_num'].apply(lambda x: f"S{x}"))
-                if 'q10' in df_future.columns and 'q90' in df_future.columns:
-                    df_display['IC 80 %'] = (df_future['q10'].round(0).astype(int).astype(str)
-                                             + " – " + df_future['q90'].round(0).astype(int).astype(str))
-                if 'horizon' in df_future.columns:
-                    df_display['Horizon'] = 'h+' + df_future['horizon'].astype(int).astype(str)
-                df_display = df_display.rename(columns={'health_area': 'Aire',
-                                                        'predicted_cases': 'Cas Prédits'})
-                st.dataframe(df_display.sort_values('Cas Prédits', ascending=False).head(30),
-                             use_container_width=True)
-
-                # ── Heatmap ─────────────────────────────────────────────────
-                _col_sem = 'period' if _has_period else 'week_num'
-                top15 = (df_future.groupby('health_area')['predicted_cases']
-                         .sum().sort_values(ascending=False).head(15).index)
+                df_display = df_future[['health_area', 'week_num', 'predicted_cases']].copy()
+                if "period" in df_cases.columns and "year" in df_cases.columns:
+                    max_week_num = df_cases.groupby(
+                        df_cases["period"]
+                    ).ngroups
+                    last_year  = int(df_cases.sort_values("period").iloc[-1]["year"])
+                    last_week  = int(df_cases.sort_values("period").iloc[-1]["week_"])
+                    base_num   = df_cases.sort_values("period")["week_"].max()
+                
+                    def week_num_to_label(wn):
+                        offset = wn - df_cases["week_"].max()  # pas depuis 0
+                        y, w = last_year, last_week
+                        for _ in range(max(0, offset)):
+                            w += 1
+                            if w > 52:
+                                w = 1
+                                y += 1
+                        return f"{y}-S{str(w).zfill(2)}"
+                
+                    df_display['week_num'] = df_display['week_num'].apply(week_num_to_label)
+                else:
+                    df_display['week_num'] = df_display['week_num'].apply(lambda x: f"S{x}")
+                
+                df_display.columns = ['Aire', 'Semaine', 'Cas Prédits']
+                st.dataframe(df_display.sort_values('Cas Prédits', ascending=False).head(30))
+                
+                # Heatmap
+                top15 = df_future.groupby('health_area')['predicted_cases'].sum().sort_values(ascending=False).head(15).index
                 pivot = df_future[df_future['health_area'].isin(top15)].pivot_table(
-                    index='health_area', columns=_col_sem, values='predicted_cases',
-                    aggfunc='sum')
-
+                    index='health_area', columns='week_num', values='predicted_cases', aggfunc='sum'
+                )
+                
                 fig = px.imshow(
                     pivot, labels=dict(x="Semaine", y="Aire", color="Cas"),
-                    x=[str(c) for c in pivot.columns], y=pivot.index,
+                    x=[f"S{c}" for c in pivot.columns], y=pivot.index,
                     color_continuous_scale='Reds', title="Top 15 Aires à Risque"
                 )
                 fig.update_layout(height=700, width=None)
-                st.plotly_chart(fig, use_container_width=True)
-
+                st.plotly_chart(fig, width='stretch')
+                # Après la heatmap (ligne ~1580)
                 st.markdown("---")
                 st.markdown("### 🚨 Zones à Risque Élevé")
-
+                
+                # Calculer seuil
+                alert_threshold = 75  # Vous pouvez le remettre en slider si besoin
                 threshold_value = df_future['predicted_cases'].quantile(alert_threshold / 100)
+                
+                # Filtrer zones à risque
                 df_alerts = df_future[df_future['predicted_cases'] > threshold_value].copy()
-                df_alerts = (df_alerts.groupby('health_area')['predicted_cases']
-                             .sum().sort_values(ascending=False))
-
+                df_alerts = df_alerts.groupby('health_area')['predicted_cases'].sum().sort_values(ascending=False)
+                
                 if not df_alerts.empty:
                     col1, col2 = st.columns([2, 1])
-
+                    
                     with col1:
                         st.dataframe(
-                            df_alerts.reset_index().rename(
-                                columns={'health_area': 'Aire de Santé',
-                                         'predicted_cases': 'Cas Totaux Prévus'}),
+                            df_alerts.reset_index().rename(columns={'health_area': 'Aire de Santé', 'predicted_cases': 'Cas Totaux Prévus'}),
                             use_container_width=True
                         )
-
+                    
                     with col2:
                         st.metric("🚨 Zones à Risque", len(df_alerts))
                         st.metric("📊 Seuil", f"{threshold_value:.0f} cas")
-                        st.info(f"Alertes pour le top {100 - alert_threshold}% des "
-                                f"prédictions (au-dessus du {alert_threshold}e percentile)")
+                        st.info(f"Alertes pour le top {100 - alert_threshold}% des prédictions (au-dessus du {alert_threshold}e percentile)")
                 else:
-                    st.success("✅ Aucune zone au-dessus du seuil d'alerte")
-               
+                    st.success("✅ Aucune zone au-dessus du seuil d'alerte")               
 # ============================================================
 # TAB 4 : CARTOGRAPHIE DES PRÉDICTIONS
 # ============================================================

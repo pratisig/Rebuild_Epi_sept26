@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Données volumineuses / artefacts d'exécution
+reports/benchmark_log.txt
+*.log
+*.tmp
+.DS_Store
+
+# Secrets : ne JAMAIS engager (voir action I1 du rapport d'audit)
+credentials.yaml
+credentials.yml
+.env
+*.pem

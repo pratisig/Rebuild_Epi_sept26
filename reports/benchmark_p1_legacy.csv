@@ -1,0 +1,4 @@
+algorithme,R2_affiche_in_sample,R2_CV_affiche,R2_CV_ecart_type,MAE_in_sample,RMSE_in_sample,n_features_modele,n_obs_modele,n_obs_brutes,ratio_pred_obs,erreur
+RandomForest,0.9923,0.9024,0.0655,137.35,549.23,9,3737,11083,0.47,
+GradientBoosting,0.9993,0.911,0.0484,108.58,160.73,9,3737,11083,0.344,
+ExtraTrees,0.9971,0.8943,0.0997,84.28,339.04,9,3737,11083,0.483,
