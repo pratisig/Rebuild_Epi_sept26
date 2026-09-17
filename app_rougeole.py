@@ -79,7 +79,7 @@ def init_gee():
         return False
 
 gee_ok = init_gee()
-    st.sidebar.success("✓ GEE connecté")
+        st.sidebar.success("✓ GEE connecté")
 
 # ── Session state ─────────────────────────────────────────────
 if 'pays_precedent' not in st.session_state:
