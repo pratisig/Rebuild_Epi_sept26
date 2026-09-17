@@ -53,7 +53,7 @@ PAYS_ISO3_MAP = {
 }
 
 # ── GEE ───────────────────────────────────────────────────────
-@@st.cache_resource
+@st.cache_resource
 def init_gee():
     """Initialise Google Earth Engine.
 
