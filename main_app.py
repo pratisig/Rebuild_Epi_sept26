@@ -7,6 +7,18 @@ Développée pour Médecins Sans Frontières (MSF)
 
 import ast
 import streamlit as st
+# --- DIAGNOSTIC TEMPORAIRE ---
+try:
+    _d = st.secrets.to_dict()
+    _noms = sorted(_d.keys())
+    st.sidebar.caption("🔎 Secrets chargés : " + (", ".join(_noms) if _noms else "(aucun)"))
+    for _k in _noms:
+        _v = _d[_k]
+        st.sidebar.caption(f"   {_k} = TABLE {sorted(_v.keys())}" if isinstance(_v, dict)
+                           else f"   {_k} = chaîne de {len(str(_v))} caractères")
+except Exception as _e:
+    st.sidebar.caption(f"🔎 Aucun secret lisible : {type(_e).__name__}")
+# --- FIN ---
 import os
 import yaml
 from yaml.loader import SafeLoader
