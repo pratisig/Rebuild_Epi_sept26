@@ -53,23 +53,32 @@ PAYS_ISO3_MAP = {
 }
 
 # ── GEE ───────────────────────────────────────────────────────
-@st.cache_resource
+@@st.cache_resource
 def init_gee():
+    """Initialise Google Earth Engine.
+
+    Les erreurs sont affichées au lieu d'être avalées : un échec silencieux
+    laisse croire que GEE fonctionne alors que les covariables sont absentes.
+    """
     try:
         key_dict = json.loads(st.secrets["GEE_SERVICE_ACCOUNT"])
         credentials = ee.ServiceAccountCredentials(
             key_dict["client_email"], key_data=json.dumps(key_dict))
         ee.Initialize(credentials)
+        st.sidebar.success("✅ GEE initialisé (Service Account)")
         return True
-    except:
-        try:
-            ee.Initialize()
-            return True
-        except:
-            return False
+    except Exception as e:
+        st.sidebar.warning(f"⚠️ Service Account échec : {str(e)[:100]}")
+
+    try:
+        ee.Initialize()
+        st.sidebar.success("✅ GEE initialisé (Défaut)")
+        return True
+    except Exception as e:
+        st.sidebar.error(f"❌ GEE échec total : {str(e)[:100]}")
+        return False
 
 gee_ok = init_gee()
-if gee_ok:
     st.sidebar.success("✓ GEE connecté")
 
 # ── Session state ─────────────────────────────────────────────
